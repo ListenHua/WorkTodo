@@ -55,6 +55,9 @@ try {
     if (args.includes('--no-sign')) env.APPLE_SIGNING_IDENTITY = '-'
     else env.APPLE_SIGNING_IDENTITY ??= '-'
   }
+  // Keep the Finder layout even with --ci / CI, which otherwise skips the
+  // background and icon positioning and leaves Applications sorted first.
+  if (os === 'macos') env.TAURI_BUNDLER_DMG_IGNORE_CI = 'true'
   env.PROJECT_MANAGE_RELEASE_TYPE = releaseType
   const targetRoot = resolve(root, process.env.CARGO_TARGET_DIR ?? 'src-tauri/target')
   const profileRoot = join(targetRoot, ...(explicitTarget ? [target] : []), 'release')
