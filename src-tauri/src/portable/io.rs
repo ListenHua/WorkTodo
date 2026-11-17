@@ -51,7 +51,7 @@ pub fn read(file: &Path) -> AppResult<Value> {
         return Err(invalid("配置文件类型或大小无效"));
     }
     serde_json::from_reader(File::open(file)?)
-        .map_err(|_| invalid("JSON 损坏，请从备份恢复；未覆盖原文件"))
+        .map_err(|_| invalid("JSON 损坏，请检查目录文件或导出诊断副本；未覆盖原文件"))
 }
 pub fn atomic(file: &Path, data: &[u8]) -> AppResult<()> {
     let parent = file.parent().ok_or_else(|| invalid("保存位置无效"))?;

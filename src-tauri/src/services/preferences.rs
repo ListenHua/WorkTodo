@@ -5,11 +5,39 @@ use rusqlite::{Connection, OptionalExtension};
 fn validate_key(key: &str) -> AppResult<()> {
     if !matches!(
         key,
-        "appearance" | "capture_project" | "capture_draft" | "changelog_seen" | "strict_offline"
+        "appearance"
+            | "capture_project"
+            | "capture_draft"
+            | "changelog_seen"
+            | "strict_offline"
+            | "project_sort"
     ) {
         return Err(AppError::new("INVALID_PREFERENCE", "不支持的本地配置项"));
     }
     Ok(())
+}
+fn valid_project_sort(value: &str) -> bool {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ProjectSort {
+        mode: String,
+        order: Vec<String>,
+    }
+    if value.len() > 512_000 {
+        return false;
+    }
+    let Ok(sort) = serde_json::from_str::<ProjectSort>(value) else {
+        return false;
+    };
+    let mut ids = std::collections::HashSet::new();
+    matches!(
+        sort.mode.as_str(),
+        "manual" | "name-asc" | "name-desc" | "created-desc" | "created-asc"
+    ) && sort.order.len() <= 10_000
+        && sort
+            .order
+            .iter()
+            .all(|id| uuid::Uuid::parse_str(id).is_ok() && ids.insert(id))
 }
 pub fn get(db: &Connection, key: &str) -> AppResult<Option<String>> {
     validate_key(key)?;
@@ -28,6 +56,7 @@ pub fn set(db: &Connection, key: &str, value: &str) -> AppResult<()> {
         "appearance" => matches!(value, "light" | "dark" | "system"),
         "capture_project" => value.is_empty() || uuid::Uuid::parse_str(value).is_ok(),
         "capture_draft" => value.len() <= 100_000,
+        "project_sort" => valid_project_sort(value),
         "changelog_seen" => {
             let parts: Vec<_> = value.split('.').collect();
             parts.len() == 3
@@ -79,5 +108,77 @@ mod tests {
             get(&db, "capture_draft").unwrap().as_deref(),
             Some("本地草稿\n第二行")
         );
+    }
+    #[test]
+    fn project_sort_validates_before_overwriting() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.db");
+        crate::db::initialize(&path).unwrap();
+        let db = crate::db::connect(&path).unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        let valid = serde_json::json!({"mode":"manual","order":[id]}).to_string();
+        set(&db, "project_sort", &valid).unwrap();
+        for value in [
+            serde_json::json!({"mode":"unknown","order":[]}),
+            serde_json::json!({"mode":"manual","order":[id,id]}),
+            serde_json::json!({"mode":"manual","order":["../file"]}),
+            serde_json::json!({"mode":"manual","order":"invalid"}),
+            serde_json::json!({"mode":"manual","order":[],"extra":true}),
+        ] {
+            assert!(set(&db, "project_sort", &value.to_string()).is_err());
+            assert_eq!(
+                get(&db, "project_sort").unwrap().as_deref(),
+                Some(valid.as_str())
+            );
+        }
+        assert!(set(&db, "project_sort", &"x".repeat(512_001)).is_err());
+        drop(db);
+        let db = crate::db::connect(&path).unwrap();
+        assert_eq!(
+            get(&db, "project_sort").unwrap().as_deref(),
+            Some(valid.as_str())
+        );
+    }
+    #[test]
+    fn project_sort_moves_with_the_folder_without_a_cache() {
+        use crate::{db, portable, services::safe_fs};
+        let temp = tempfile::tempdir().unwrap();
+        let bootstrap = temp.path().join("first/app.db");
+        std::fs::create_dir_all(bootstrap.parent().unwrap()).unwrap();
+        db::initialize(&bootstrap).unwrap();
+        let root = temp.path().join("workspace");
+        std::fs::create_dir(&root).unwrap();
+        portable::location::select(&bootstrap, &root, |_| true).unwrap();
+        let project = portable::execute(&bootstrap, true, |db| {
+            crate::services::projects::create(
+                db,
+                crate::models::CreateProject {
+                    name: "排序项目".into(),
+                    description: String::new(),
+                    color: "#1677FF".into(),
+                    ..Default::default()
+                },
+            )
+        })
+        .unwrap();
+        let saved = serde_json::json!({"mode":"manual","order":[project.id]}).to_string();
+        portable::execute(&bootstrap, true, |db| set(db, "project_sort", &saved)).unwrap();
+        let docs = portable::documents::load(&root).unwrap();
+        assert_eq!(
+            docs["config.json"]["preferences"]["extra"]["preference:project_sort"],
+            saved
+        );
+        let second = temp.path().join("second/app.db");
+        std::fs::create_dir_all(second.parent().unwrap()).unwrap();
+        db::initialize(&second).unwrap();
+        let copied = temp.path().join("copied");
+        safe_fs::copy_tree(&root, &copied).unwrap();
+        portable::open(&second, &copied).unwrap();
+        portable::execute(&second, false, |db| {
+            assert_eq!(get(db, "project_sort")?.as_deref(), Some(saved.as_str()));
+            assert_eq!(crate::services::projects::list(db)?[0].id, project.id);
+            Ok(())
+        })
+        .unwrap();
     }
 }

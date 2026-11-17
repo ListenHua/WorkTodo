@@ -8,6 +8,7 @@ import CalendarIcon from '@mingcute/vue/core-regular/calendar'
 import CheckIcon from '@mingcute/vue/core-regular/check'
 import ListIcon from '@mingcute/vue/core-regular/list-check'
 import FolderIcon from '@mingcute/vue/core-regular/folder'
+import FolderWarningIcon from '@mingcute/vue/core-regular/folder-warning'
 import SettingsIcon from '@mingcute/vue/core-regular/settings-1'
 import EditIcon from '@mingcute/vue/core-regular/edit-2'
 import PlusIcon from '@mingcute/vue/core-regular/add'
@@ -30,6 +31,7 @@ import UploadIcon from '@mingcute/vue/core-regular/upload'
 import ImageIcon from '@mingcute/vue/core-regular/pic'
 import FileIcon from '@mingcute/vue/core-regular/file'
 import MoreIcon from '@mingcute/vue/core-regular/more-1'
+import DragIcon from '@mingcute/vue/core-regular/dots'
 import DeleteIcon from '@mingcute/vue/core-regular/delete-2'
 import EyeIcon from '@mingcute/vue/core-regular/eye'
 import BookmarkIcon from '@mingcute/vue/core-regular/bookmark'
@@ -49,6 +51,7 @@ const icons: Record<string, Component> = {
   check: CheckIcon,
   list: ListIcon,
   folder: FolderIcon,
+  'folder-warning': FolderWarningIcon,
   settings: SettingsIcon,
   plus: PlusIcon,
   edit: EditIcon,
@@ -74,6 +77,7 @@ const icons: Record<string, Component> = {
   bookmark: BookmarkIcon,
   bookmarked: BookmarkFilledIcon,
   more: MoreIcon,
+  drag: DragIcon,
   delete: DeleteIcon,
 }
 </script>

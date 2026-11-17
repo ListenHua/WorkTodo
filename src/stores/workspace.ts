@@ -1,3 +1,5 @@
+import { preferences } from '../services/preferences'
+import { readProjectSort, sortProjects, type ProjectSort } from '../shared/project-sort'
 import { reminders } from '../services/desktop'
 import { emit } from '@tauri-apps/api/event'
 import { computed, ref } from 'vue'
@@ -17,6 +19,9 @@ import type {
 export const useWorkspaceStore = defineStore('workspace', () => {
   const status = ref<WorkspaceStatus>({ rootPath: null, available: false, pendingOperations: 0 })
   const projects = ref<Project[]>([])
+  const projectSort = ref<ProjectSort>(readProjectSort(null))
+  const orderedProjects = computed(() => sortProjects(projects.value, projectSort.value))
+  const sortingProjects = ref(false)
   const tasks = ref<Task[]>([])
   const loading = ref(true)
   const error = ref('')
@@ -44,14 +49,16 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     error.value = ''
     syncClock()
     try {
-      const [nextStatus, nextProjects, nextTasks] = await Promise.all([
+      const [nextStatus, nextProjects, nextTasks, nextSort] = await Promise.all([
         api.getStatus(),
         api.listProjects(),
         api.listTasks(),
+        preferences.get('project_sort'),
       ])
       if (version !== refreshVersion) return
       status.value = nextStatus
       projects.value = nextProjects
+      projectSort.value = readProjectSort(nextSort)
       tasks.value = nextTasks
     } catch (cause) {
       if (version === refreshVersion) error.value = errorMessage(cause)
@@ -128,6 +135,25 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     await refresh()
     if (desktop) void emit('workspace-changed')
   }
+  async function saveProjectSort(input: ProjectSort) {
+    if (sortingProjects.value) throw new Error('正在保存项目顺序，请稍后再试')
+    const bindingId = status.value.bindingId
+    const next: ProjectSort = {
+      mode: input.mode,
+      order: sortProjects(projects.value, input).map((project) => project.id),
+    }
+    sortingProjects.value = true
+    try {
+      await preferences.set('project_sort', JSON.stringify(next), bindingId)
+      if (status.value.bindingId === bindingId) {
+        projectSort.value = next
+        await refresh()
+      }
+      if (desktop) void emit('workspace-changed')
+    } finally {
+      sortingProjects.value = false
+    }
+  }
   async function setProjectPinned(id: string, pinned: boolean) {
     await api.setProjectPinned(id, pinned)
     await refresh()
@@ -156,6 +182,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     desktop,
     status,
     projects,
+    projectSort,
+    orderedProjects,
+    sortingProjects,
+    saveProjectSort,
     tasks,
     loading,
     error,

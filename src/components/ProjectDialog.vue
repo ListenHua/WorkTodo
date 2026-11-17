@@ -3,11 +3,12 @@ import IconHint from './IconHint.vue'
 import AppIcon from './AppIcon.vue'
 import { useAppMessage } from '../composables/useAppMessage'
 import { ref, watch } from 'vue'
-import { NButton, NModal, NInput, NSelect, NColorPicker } from 'naive-ui'
+import { NButton, NModal, NInput, NSelect } from 'naive-ui'
 import { useUiStore } from '../stores/ui'
 import { useWorkspaceStore } from '../stores/workspace'
 import { errorMessage, validateProjectName } from '../shared/domain'
 import ProjectTagsEditor from './ProjectTagsEditor.vue'
+import AppColorPicker from './AppColorPicker.vue'
 import { validateProjectTags } from '../shared/project-tags'
 import { projectDirectoryConflict } from '../shared/project-directory'
 import type { CreateProject, Project, ProjectTag, ProjectDirectoryConflict } from '../shared/types'
@@ -97,7 +98,7 @@ async function confirmMerge() {
     v-model:show="ui.projectDialog"
     :title="ui.editingProject ? '编辑项目' : '新建项目'"
     preset="card"
-    class="form-modal"
+    class="form-modal project-form-modal"
     :aria-label="ui.editingProject ? '编辑项目' : '新建项目'"
     :bordered="false"
     :mask-closable="false"
@@ -168,21 +169,12 @@ async function confirmMerge() {
           ><button
             type="button"
             :style="{ background: option }"
-            :class="{ selected: color === option }"
+            :class="{ selected: color.toUpperCase() === option.toUpperCase() }"
             :aria-label="`选择颜色 ${option}`"
-            :aria-pressed="color === option"
+            :aria-pressed="color.toUpperCase() === option.toUpperCase()"
             @click="color = option"
         /></IconHint>
-        <NColorPicker
-          v-model:value="color"
-          class="project-color-picker"
-          aria-label="自定义项目颜色"
-          :modes="['hex']"
-          :actions="['confirm']"
-          :show-alpha="false"
-          :swatches="[...projectColors]"
-          :disabled="busy"
-        />
+        <AppColorPicker v-model="color" label="自定义项目颜色" :disabled="busy" />
       </div>
       <ProjectTagsEditor v-model="tags" :disabled="busy" />
       <p class="folder-hint">

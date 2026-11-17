@@ -3,6 +3,7 @@ pub mod documents;
 pub mod file_versions;
 pub mod io;
 pub mod journal;
+pub mod location;
 pub mod recovery;
 pub mod transfer;
 use crate::{
@@ -94,6 +95,13 @@ pub fn validate_binding(binding: &Binding) -> AppResult<()> {
 pub fn open(bootstrap: &Path, root: &Path) -> AppResult<crate::models::WorkspaceStatus> {
     let root = root.canonicalize()?;
     let _lock = io::lock(&root)?;
+    open_locked(bootstrap, &root)
+}
+pub(super) fn open_locked(
+    bootstrap: &Path,
+    root: &Path,
+) -> AppResult<crate::models::WorkspaceStatus> {
+    let root = root.to_path_buf();
     journal::recover(&root)?;
     let docs = documents::load(&root)?;
     for (name, doc) in &docs {
@@ -147,6 +155,7 @@ pub fn open(bootstrap: &Path, root: &Path) -> AppResult<crate::models::Workspace
         "INSERT OR REPLACE INTO settings(key,value) VALUES('_binding_id',?1)",
         [&binding.id],
     )?;
+    let status = services::workspace::status(&cache)?;
     io::write(
         &device_file(bootstrap),
         &serde_json::to_value(Device {
@@ -154,32 +163,7 @@ pub fn open(bootstrap: &Path, root: &Path) -> AppResult<crate::models::Workspace
         })
         .unwrap(),
     )?;
-    services::workspace::status(&cache)
-}
-pub fn select(bootstrap: &Path, root: &Path) -> AppResult<crate::models::WorkspaceStatus> {
-    if root.join("config.json").exists() {
-        return open(bootstrap, root);
-    }
-    if binding(bootstrap)?.is_some() {
-        return Err(AppError::new(
-            "ROOT_MIGRATION_REQUIRED",
-            "请使用迁移目录，或选择已有工作目录；当前数据未更改",
-        ));
-    }
-    let db = db::connect(bootstrap)?;
-    let count: i64 = db.query_row(
-        "SELECT (SELECT COUNT(*) FROM projects WHERE id!='__inbox__')+(SELECT COUNT(*) FROM tasks)",
-        [],
-        |r| r.get(0),
-    )?;
-    if count > 0 || fs::read_dir(root)?.next().is_some() {
-        return Err(AppError::new(
-            "ROOT_MIGRATION_REQUIRED",
-            "此目录非空或存在旧数据，请使用“升级/迁移目录”复制转换到空目录",
-        ));
-    }
-    initialize(root, &db)?;
-    open(bootstrap, root)
+    Ok(status)
 }
 pub fn initialize(root: &Path, db: &Connection) -> AppResult<()> {
     fs::create_dir_all(root.join("Files"))?;

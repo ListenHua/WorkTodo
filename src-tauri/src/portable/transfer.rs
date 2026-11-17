@@ -23,7 +23,7 @@ fn empty(target: &Path, source: Option<&Path>) -> AppResult<PathBuf> {
     }
     Ok(target)
 }
-fn copy_contents(source: &Path, target: &Path) -> AppResult<()> {
+pub(super) fn copy_contents(source: &Path, target: &Path) -> AppResult<()> {
     fn copy(
         root: &Path,
         source: &Path,
@@ -79,26 +79,19 @@ fn copy_contents(source: &Path, target: &Path) -> AppResult<()> {
 }
 
 pub fn upgrade(bootstrap: &Path, target: &Path) -> AppResult<PathBuf> {
+    super::location::select(bootstrap, target, |_| false)?
+        .map(|_| target.to_path_buf())
+        .ok_or_else(|| AppError::new("REPLACEMENT_CANCELLED", "已取消目录替换，当前数据未更改"))
+}
+
+// The caller holds the current workspace lock until installation and binding finish.
+pub(super) fn prepare(bootstrap: &Path, stage: &Path) -> AppResult<()> {
     if let Some(binding) = super::binding(bootstrap)? {
-        super::validate_binding(&binding)?;
-        let _lock = io::lock(&binding.root)?;
-        journal::recover(&binding.root)?;
         let docs = super::load_binding(&binding)?;
         verify_resources(&binding.root, &docs)?;
-        let source_inventory = inventory(&binding.root)?;
-        let target = empty(target, Some(&binding.root))?;
-        copy_contents(&binding.root, &target)?;
-        if inventory(&target)? != source_inventory || inventory(&binding.root)? != source_inventory
-        {
-            return Err(AppError::new(
-                "SOURCE_CHANGED",
-                "复制期间源目录发生变化；原目录未切换",
-            ));
-        }
-        documents::load(&target)?;
-        drop(_lock);
-        super::open(bootstrap, &target)?;
-        return Ok(target);
+        copy_contents(&binding.root, stage)?;
+        documents::load(stage)?;
+        return Ok(());
     }
     let legacy = db::connect(bootstrap)?;
     if !services::data::pending(&legacy)?.is_empty() {
@@ -109,29 +102,25 @@ pub fn upgrade(bootstrap: &Path, target: &Path) -> AppResult<PathBuf> {
     }
     let source = services::workspace::root(&legacy)?;
     let original_inventory = source.as_ref().map(|root| inventory(root)).transpose()?;
-    let target = empty(target, source.as_deref())?;
-    let stage = tempfile::Builder::new()
-        .prefix(".workspace-upgrade-")
-        .tempdir_in(target.parent().unwrap())?;
-    let old = stage.path().join("legacy.db");
+    let old = stage.join("legacy.db");
     legacy.backup("main", &old, None)?;
     let mut cache = db::connect(&old)?;
     let projects = services::projects::list(&cache)?;
-    fs::create_dir(stage.path().join("Files"))?;
+    fs::create_dir(stage.join("Files"))?;
     if let Some(source) = &source {
         for project in &projects {
             let src = services::projects::folder(&cache, &project.id)?;
-            let destination = stage.path().join(&project.directory_relpath);
+            let destination = stage.join(&project.directory_relpath);
             fs::create_dir(&destination)?;
             services::safe_fs::copy_tree(&src, &destination.join("Files"))?;
         }
         if source.join("_收件箱").is_dir() {
-            copy_contents(&source.join("_收件箱"), &stage.path().join("Files"))?;
+            copy_contents(&source.join("_收件箱"), &stage.join("Files"))?;
         }
         if source.join("_回收站").is_dir() {
-            services::safe_fs::copy_tree(&source.join("_回收站"), &stage.path().join("_回收站"))?;
+            services::safe_fs::copy_tree(&source.join("_回收站"), &stage.join("_回收站"))?;
         } else {
-            fs::create_dir(stage.path().join("_回收站"))?;
+            fs::create_dir(stage.join("_回收站"))?;
         }
         // Preserve unregistered root content as explicit unclassified files rather than omit it.
         for entry in fs::read_dir(source)? {
@@ -142,7 +131,7 @@ pub fn upgrade(bootstrap: &Path, target: &Path) -> AppResult<PathBuf> {
             {
                 continue;
             }
-            let dest = stage.path().join("Files").join(&name);
+            let dest = stage.join("Files").join(&name);
             if entry.file_type()?.is_dir() {
                 services::safe_fs::copy_tree(&entry.path(), &dest)?;
             } else if services::files::is_link(&fs::symlink_metadata(entry.path())?) {
@@ -170,14 +159,14 @@ pub fn upgrade(bootstrap: &Path, target: &Path) -> AppResult<PathBuf> {
     )?;
     tx.execute(
         "INSERT OR REPLACE INTO settings(key,value) VALUES('storage_root',?1)",
-        [stage.path().to_string_lossy().as_ref()],
+        [stage.to_string_lossy().as_ref()],
     )?;
     tx.commit()?;
     for project in &projects {
         services::files::scan(&mut cache, &project.id)?;
     }
     services::files::scan(&mut cache, "__inbox__")?;
-    super::initialize(stage.path(), &cache)?;
+    super::initialize(stage, &cache)?;
     drop(cache);
     fs::remove_file(&old)?;
     for ext in ["db-wal", "db-shm"] {
@@ -186,7 +175,7 @@ pub fn upgrade(bootstrap: &Path, target: &Path) -> AppResult<PathBuf> {
             fs::remove_file(side)?;
         }
     }
-    documents::load(stage.path())?;
+    documents::load(stage)?;
     if let Some(source) = &source {
         if Some(inventory(source)?) != original_inventory {
             return Err(AppError::new(
@@ -195,13 +184,7 @@ pub fn upgrade(bootstrap: &Path, target: &Path) -> AppResult<PathBuf> {
             ));
         }
     }
-    let staged_inventory = inventory(stage.path())?;
-    copy_contents(stage.path(), &target)?;
-    if inventory(&target)? != staged_inventory {
-        return Err(io::invalid("升级目标校验失败，原数据未切换"));
-    }
-    super::open(bootstrap, &target)?;
-    Ok(target)
+    Ok(())
 }
 pub fn inventory(root: &Path) -> AppResult<BTreeMap<String, String>> {
     fn walk(
@@ -500,13 +483,13 @@ pub fn import_project(bootstrap: &Path, source: &Path) -> AppResult<PathBuf> {
     })
 }
 
-fn verify_resources(root: &Path, docs: &documents::Documents) -> AppResult<()> {
+pub(super) fn verify_resources(root: &Path, docs: &documents::Documents) -> AppResult<()> {
     let check = |path: String, expected: &serde_json::Value| -> AppResult<()> {
         let file = io::path(root, &path)?;
         if io::hash(&file)?
             != expected
                 .as_str()
-                .ok_or_else(|| io::invalid("文件缺失，无法报告完整备份"))?
+                .ok_or_else(|| io::invalid("文件缺失，无法完成目录校验"))?
         {
             return Err(io::invalid("资源缺失或发生变化，请先检查文件"));
         }

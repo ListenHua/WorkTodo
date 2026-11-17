@@ -30,7 +30,9 @@ pub fn run() {
                     api.prevent_close();
                     let _ = window.hide();
                 } else if let Some(state) = window.try_state::<commands::AppState>() {
-                    if let Ok(settings) = portable::execute(&state.db_path, false, |db|services::reminders::settings(db)) {
+                    if let Ok(settings) = portable::execute(&state.db_path, false, |db| {
+                        services::reminders::settings(db)
+                    }) {
                         if settings.close_to_tray {
                             api.prevent_close();
                             let _ = window.hide();
@@ -51,16 +53,6 @@ pub fn run() {
             // Portable startup does not depend on the retained legacy database.
             if !data_dir.join("device.json").exists() {
                 db::initialize(&db_path).map_err(|error| std::io::Error::other(error.message))?;
-            }
-            if portable::binding(&db_path).is_ok_and(|binding| binding.is_none()) {
-                let legacy = db::connect(&db_path).map_err(|e|std::io::Error::other(e.message))?;
-                let empty: bool = legacy.query_row("SELECT NOT EXISTS(SELECT 1 FROM tasks) AND NOT EXISTS(SELECT 1 FROM projects WHERE id!='__inbox__') AND NOT EXISTS(SELECT 1 FROM settings WHERE key='storage_root')", [], |r|r.get(0)).unwrap_or(false);
-                if empty {
-                    if let Ok(documents) = app.path().document_dir() {
-                        let root = documents.join("项目工作台");
-                        if std::fs::create_dir_all(&root).is_ok() { let _ = portable::select(&db_path, &root); }
-                    }
-                }
             }
             app.manage(commands::AppState {
                 db_path,
@@ -132,10 +124,11 @@ pub fn run() {
             if let tauri::RunEvent::ExitRequested { api, .. } = &event {
                 use std::sync::atomic::Ordering;
                 use tauri::Emitter;
-                let state=app.state::<desktop::DesktopState>();
+                let state = app.state::<desktop::DesktopState>();
                 if state.capture_ready.load(Ordering::SeqCst)
                     && !state.flush_exit.load(Ordering::SeqCst)
-                    && app.get_webview_window("capture").is_some() {
+                    && app.get_webview_window("capture").is_some()
+                {
                     api.prevent_exit();
                     let _ = app.emit_to("capture", "capture-before-exit", ());
                 }

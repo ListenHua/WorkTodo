@@ -15,6 +15,7 @@ import { desktopApi } from '../services/desktop'
 import type { DesktopStatus, StorageInfo } from '../services/desktop'
 import { errorMessage } from '../shared/domain'
 import AppIcon from '../components/AppIcon.vue'
+import IconHint from '../components/IconHint.vue'
 import AboutSettings from '../components/AboutSettings.vue'
 import { useReleaseStore } from '../stores/release'
 import { shortcutFromKey } from '../shared/capture-shortcut'
@@ -25,13 +26,11 @@ const theme = useThemeStore()
 const storageInfo = ref<StorageInfo | null>(null)
 const strictOffline = ref(false)
 async function refreshStorage() {
-  const [info, paths, offline] = await Promise.allSettled([
+  const [info, offline] = await Promise.allSettled([
     desktopApi.storage(),
-    preferences.paths(),
     preferences.get('strict_offline'),
   ])
   if (info.status === 'fulfilled') storageInfo.value = info.value
-  if (paths.status === 'fulfilled') localPaths.value = paths.value
   if (offline.status === 'fulfilled') strictOffline.value = offline.value === 'true'
 }
 async function setStrictOffline(value: boolean) {
@@ -40,13 +39,12 @@ async function setStrictOffline(value: boolean) {
     strictOffline.value = value
   }, '已保存离线设置')
 }
-const localPaths = ref<Awaited<ReturnType<typeof preferences.paths>>>(null)
 const savedSettings = ref('')
 const dirty = computed(
   () => !!runtime.value && JSON.stringify(runtime.value.settings) !== savedSettings.value,
 )
 const settingsTabs = [
-  { name: 'storage', label: '存储与备份' },
+  { name: 'storage', label: '存储' },
   { name: 'capture', label: '快捷采集' },
   { name: 'desktop', label: '桌面与提醒' },
   { name: 'appearance', label: '外观' },
@@ -175,6 +173,10 @@ async function refreshMiddle(retry = false) {
 }
 const onFocus = () => {
   void refreshMiddle(true)
+  if (!busy.value) {
+    void refreshStorage()
+    void workspace.refresh()
+  }
 }
 async function toggleMiddle(enabled: boolean) {
   if (!runtime.value || busy.value) return
@@ -224,23 +226,41 @@ async function recovery(action: 'export' | 'restore' | 'diagnostic') {
       )
   })
 }
-async function data(action: 'backup' | 'migrate' | 'restore' | 'import') {
+async function selectStorage() {
   await run(async () => {
-    if (action === 'migrate') await preferences.get('capture_draft')
-    const path = await desktopApi.data(action)
-    if (path && action === 'restore') runtime.value = null
-    if (path)
-      message.success(
-        action === 'backup'
-          ? `备份已保存：${path}`
-          : action === 'restore'
-            ? `已恢复到：${path}，原目录已保留`
-            : action === 'import'
-              ? '已导入项目副本'
-              : '迁移完成，原目录已保留',
-      )
+    // Flush the capture draft before the backend takes a snapshot of the workspace.
+    await preferences.get('capture_draft')
+    const previous = workspace.status.bindingId ?? workspace.status.rootPath
+    const hadRoot = !!workspace.status.rootPath
+    await workspace.selectRoot()
+    if ((workspace.status.bindingId ?? workspace.status.rootPath) !== previous) {
+      runtime.value = null
+      message.success(hadRoot ? '存储目录已迁移，原目录已保留' : '存储目录已设置')
+    }
   })
 }
+async function importProject() {
+  await run(async () => {
+    if (await desktopApi.data('import')) message.success('已导入项目副本')
+  })
+}
+const storageState = computed(() => {
+  if (!workspace.status.rootPath)
+    return { icon: 'folder', text: '尚未选择存储位置', color: 'var(--muted)' }
+  if (
+    !workspace.status.available ||
+    workspace.status.readOnly ||
+    (storageInfo.value?.state &&
+      storageInfo.value.state !== 'available' &&
+      storageInfo.value.mode === 'portable')
+  )
+    return {
+      icon: 'folder-warning',
+      text: '目录不可用，请检查位置、权限或配置',
+      color: 'var(--danger)',
+    }
+  return { icon: 'brand', text: workspace.desktop ? '目录可用' : '预览目录', color: '#18a058' }
+})
 onMounted(async () => {
   await load().catch((e) => message.error(errorMessage(e)))
   await refreshStorage()
@@ -297,15 +317,6 @@ onUnmounted(() => {
           <h2>项目存储位置</h2>
           <AppIcon name="folder" :size="23" />
         </div>
-        <p class="local-data-label"><AppIcon name="folder" :size="16" />数据与配置保存在此电脑</p>
-        <div v-if="storageInfo?.configPath" class="local-data-path">
-          <span>业务配置</span><code>{{ storageInfo.configPath }}</code>
-        </div>
-        <div v-if="localPaths" class="local-data-path">
-          <span>{{ storageInfo?.mode === 'portable' ? '查询缓存' : '旧版数据库' }}</span><code>{{
-            localPaths.database
-          }}</code>
-        </div>
         <p v-if="storageInfo?.error" class="form-error" role="alert">{{ storageInfo.error }}</p>
         <NButton v-if="storageInfo?.error" :disabled="busy" @click="recovery('diagnostic')"
           >导出诊断副本</NButton
@@ -316,86 +327,37 @@ onUnmounted(() => {
         <div class="storage-setting">
           <label>当前存储位置</label>
           <div class="storage-path">
-            <AppIcon name="folder" :size="19" /><code>{{
-              workspace.status.rootPath || '尚未选择存储位置'
-            }}</code
-            ><NButton :disabled="busy" @click="run(() => workspace.selectRoot())">{{
-              workspace.desktop
-                ? storageInfo?.mode === 'portable'
-                  ? '打开已有目录'
-                  : '打开 / 新建目录'
-                : '设置预览目录'
+            <IconHint :text="storageState.text">
+              <span
+                class="storage-status-icon"
+                role="img"
+                :aria-label="storageState.text"
+                tabindex="0"
+              >
+                <AppIcon :name="storageState.icon" :size="20" :color="storageState.color" />
+              </span>
+            </IconHint>
+            <code>{{ workspace.status.rootPath || '尚未选择存储位置' }}</code>
+            <NButton :disabled="busy" :loading="busy" @click="selectStorage">{{
+              workspace.status.rootPath ? '迁移存储目录' : '选择文件夹'
             }}</NButton>
           </div>
-          <p
-            v-if="workspace.status.rootPath"
-            :class="workspace.status.available ? 'success-text' : 'form-error'"
-          >
-            {{
-              workspace.status.available
-                ? workspace.desktop
-                  ? '目录可访问'
-                  : '虚拟目录，仅用于预览'
-                : '目录不可访问，请检查位置和权限'
-            }}
-          </p>
         </div>
       </section>
       <section class="panel settings-panel">
-        <div class="panel-heading"><h2>备份与迁移</h2></div>
+        <div class="panel-heading"><h2>数据管理</h2></div>
         <div class="dialog-footer">
           <NButton
             :disabled="
               busy ||
               !workspace.desktop ||
-              (storageInfo?.mode !== 'legacy' &&
-                (!workspace.status.available || !!workspace.status.readOnly))
+              storageInfo?.mode !== 'portable' ||
+              !workspace.status.available ||
+              !!workspace.status.readOnly
             "
-            @click="data('backup')"
-            >完整备份</NButton
-          ><NPopconfirm :show-icon="false" @positive-click="data('migrate')"
-            ><template #trigger
-              ><NButton
-                :disabled="
-                  busy ||
-                  !workspace.desktop ||
-                  (storageInfo?.mode !== 'legacy' &&
-                    (!workspace.status.available || !!workspace.status.readOnly))
-                "
-                >{{ storageInfo?.mode === 'legacy' ? '升级为目录数据' : '迁移存储目录' }}</NButton
-              ></template
-            ><span v-if="storageInfo?.counts"
-              >{{ storageInfo.counts.projects }} 个项目、{{ storageInfo.counts.tasks }} 条待办、{{
-                storageInfo.counts.files
-              }}
-              个文件记录。</span
-            >将项目、待办、草稿、图标与文件复制到新的空目录并校验，完成后切换；原目录和旧数据库保留。</NPopconfirm
-          ><NPopconfirm :show-icon="false" @positive-click="data('restore')"
-            ><template #trigger
-              ><NButton :disabled="busy || !workspace.desktop">恢复备份</NButton></template
-            >恢复到新的空目录并切换工作目录，当前目录与原数据保留。</NPopconfirm
-          >
-        </div>
-        <div class="dialog-footer">
-          <NButton
-            :disabled="busy || !workspace.desktop || storageInfo?.mode !== 'portable'"
-            @click="data('import')"
+            @click="importProject"
             >导入项目副本</NButton
           >
-          <NPopconfirm
-            :show-icon="false"
-            @positive-click="run(() => desktopApi.clearCache(), '查询缓存已重建')"
-          >
-            <template #trigger
-              ><NButton
-                :disabled="
-                  busy || storageInfo?.mode !== 'portable' || storageInfo?.state !== 'available'
-                "
-                >重建查询缓存</NButton
-              ></template
-            >
-            从本地 JSON 重建查询索引，项目、附件、草稿和恢复记录均保留。
-          </NPopconfirm>
         </div>
         <div v-if="storageInfo?.recoveryCount" class="dialog-footer">
           <NButton :disabled="busy" @click="recovery('export')">导出本机恢复稿</NButton>
@@ -408,9 +370,6 @@ onUnmounted(() => {
             将本机恢复稿保存为当前目录的未分类待办；恢复稿原件保留在本机归档中。
           </NPopconfirm>
         </div>
-        <p class="setting-help">
-          目录格式备份包含 JSON、文件、图标、草稿和回收站；复制或备份期间请暂停外部修改。
-        </p>
         <div class="setting-row">
           <label>严格离线</label
           ><NSwitch

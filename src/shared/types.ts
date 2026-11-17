@@ -1,5 +1,3 @@
-import { themeColors } from '../theme'
-
 export type TaskStatus = 'todo' | 'doing' | 'done' | 'canceled'
 export type Priority = 'none' | 'low' | 'medium' | 'high'
 export interface WorkspaceStatus {
@@ -103,11 +101,14 @@ export interface WorkspaceApi {
   ): Promise<void>
 }
 export const projectColors = [
-  themeColors.primary,
-  '#a46c44',
-  '#537397',
-  '#8a6797',
-  '#8b873e',
+  '#1677ff',
+  '#e60033',
+  '#f8e58c',
+  '#f7b977',
+  '#ea5506',
+  '#ffd900',
+  '#674598',
+  '#16160e',
 ] as const
 export const priorityLabels: Record<Priority, string> = {
   none: '无优先级',

@@ -143,7 +143,7 @@ export const desktopApi = {
     if (!desktop) throw new Error('请在桌面端测试系统通知')
     await invoke('notification_test')
   },
-  async data(action: 'backup' | 'migrate' | 'restore' | 'import'): Promise<string | null> {
+  async data(action: 'import'): Promise<string | null> {
     if (!desktop) throw new Error('请在桌面端管理本地数据')
     return invoke('data_action', { action })
   },

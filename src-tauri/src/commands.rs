@@ -14,7 +14,7 @@ use std::{
 };
 use tauri::ipc::{Channel, Response};
 use tauri::{AppHandle, State};
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_opener::OpenerExt;
 
 pub static IO_LOCK: Mutex<()> = Mutex::new(());
@@ -66,6 +66,24 @@ pub async fn workspace_status(state: State<'_, AppState>) -> AppResult<Workspace
     blocking_read(state.db_path.clone(), |db| services::workspace::status(db)).await
 }
 
+fn confirm_storage_replacement(app: &AppHandle, names: &[String]) -> bool {
+    let mut list = names
+        .iter()
+        .take(20)
+        .map(|name| format!("• {name}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if names.len() > 20 {
+        list.push_str(&format!("\n另有 {} 项", names.len() - 20));
+    }
+    app.dialog()
+        .message(format!("所选文件夹中存在同名内容：\n\n{list}\n\n是否替换？同名文件夹将整体替换，其中原有内容会被覆盖；其他内容保留。取消后当前存储位置与数据不变。"))
+        .title("替换同名内容")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom("替换".into(), "取消".into()))
+        .blocking_show()
+}
+
 #[tauri::command]
 pub async fn workspace_select_root(
     app: AppHandle,
@@ -94,9 +112,17 @@ pub async fn workspace_select_root(
             .map_err(|_| AppError::new("WORKER_ERROR", "目录操作暂不可用"))?;
         match selected {
             Some(path) => {
-                let result = crate::portable::select(&bootstrap, &path)?;
-                crate::desktop::reload_runtime(&app);
-                Ok(result)
+                match crate::portable::location::select(&bootstrap, &path, |names| {
+                    confirm_storage_replacement(&app, names)
+                })? {
+                    Some(result) => {
+                        crate::desktop::reload_runtime(&app);
+                        Ok(result)
+                    }
+                    None => crate::portable::execute(&bootstrap, false, |db| {
+                        services::workspace::status(db)
+                    }),
+                }
             }
             None => {
                 crate::portable::execute(&bootstrap, false, |db| services::workspace::status(db))
@@ -444,7 +470,7 @@ pub async fn data_action(
                 "backup" => "选择备份保存位置",
                 "restore" => "选择项目工作台备份文件夹",
                 "import" => "选择要导入为副本的项目文件夹",
-                _ => "选择新的空存储文件夹",
+                _ => "选择新的存储文件夹",
             })
             .blocking_pick_folder()
             .map(|s| s.into_path())
@@ -492,7 +518,16 @@ pub async fn data_action(
             .map_err(|_| AppError::new("WORKER_ERROR", "数据操作暂不可用"))?;
         let path = match action.as_str() {
             "backup" => crate::portable::transfer::backup(&bootstrap, &selected)?,
-            "migrate" => crate::portable::transfer::upgrade(&bootstrap, &selected)?,
+            "migrate" => {
+                if crate::portable::location::select(&bootstrap, &selected, |names| {
+                    confirm_storage_replacement(&app, names)
+                })?
+                .is_none()
+                {
+                    return Ok(None);
+                }
+                selected
+            }
             "import" => crate::portable::transfer::import_project(&bootstrap, &selected)?,
             _ => return Err(AppError::new("INVALID_ACTION", "无效的数据操作")),
         };

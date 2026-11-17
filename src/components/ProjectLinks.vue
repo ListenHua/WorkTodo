@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import IconHint from './IconHint.vue'
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { NButton, NInput, NModal, NPopconfirm } from 'naive-ui'
 import type { Project, ProjectLink } from '../shared/types'
 import {
@@ -19,7 +19,22 @@ import EmptyState from './EmptyState.vue'
 const props = defineProps<{ project: Project }>()
 const workspace = useWorkspaceStore()
 const message = useAppMessage()
-const links = computed(() => props.project.links ?? [])
+const pendingLinks = shallowRef<ProjectLink[] | null>(null)
+const links = computed(() => pendingLinks.value ?? props.project.links ?? [])
+const listElement = ref<HTMLUListElement | null>(null)
+const draggingId = ref<string | null>(null)
+// undefined means outside the list; null means insert at the end.
+const dropBefore = ref<string | null>()
+let drag: {
+  id: string
+  pointerId: number
+  handle: HTMLButtonElement
+  startX: number
+  startY: number
+  x: number
+  y: number
+} | null = null
+let scrollFrame = 0
 const show = ref(false)
 const editingId = ref<string | null>(null)
 const name = ref('')
@@ -35,6 +50,8 @@ watch(
   () => props.project.id,
   () => {
     show.value = false
+    cancelSort()
+    pendingLinks.value = null
   },
 )
 watch(
@@ -62,6 +79,7 @@ watch(show, () => {
 })
 onBeforeUnmount(() => {
   ++extraction
+  cancelSort()
 })
 async function extractIcon() {
   if (extracting.value || busy.value) return
@@ -156,6 +174,142 @@ async function remove(link: ProjectLink) {
     busy.value = false
   }
 }
+function updateDropTarget() {
+  const list = listElement.value
+  if (!drag || !list) return
+  const bounds = list.getBoundingClientRect()
+  if (
+    drag.x < bounds.left ||
+    drag.x > bounds.right ||
+    drag.y < Math.max(0, bounds.top - 48) ||
+    drag.y > Math.min(window.innerHeight, bounds.bottom + 48)
+  ) {
+    dropBefore.value = undefined
+    return
+  }
+  const rows = [...list.querySelectorAll<HTMLElement>('.project-link-row')]
+  dropBefore.value =
+    rows.find((row) => {
+      if (row.dataset.linkId === drag!.id) return false
+      const box = row.getBoundingClientRect()
+      return drag!.y < box.top + box.height / 2
+    })?.dataset.linkId ?? null
+}
+function autoScroll() {
+  if (!drag || !draggingId.value) return
+  const list = listElement.value?.getBoundingClientRect()
+  if (list && drag.x >= list.left && drag.x <= list.right) {
+    const top = document.querySelector('.topbar')?.getBoundingClientRect().bottom ?? 0
+    const edge = 48
+    const delta =
+      drag.y < top + edge
+        ? -Math.min(16, (top + edge - drag.y) / 3)
+        : drag.y > window.innerHeight - edge
+          ? Math.min(16, (drag.y - window.innerHeight + edge) / 3)
+          : 0
+    if (delta && document.scrollingElement) document.scrollingElement.scrollTop += delta
+  }
+  updateDropTarget()
+  scrollFrame = requestAnimationFrame(autoScroll)
+}
+function cancelSort() {
+  const previous = drag
+  drag = null
+  draggingId.value = null
+  dropBefore.value = undefined
+  cancelAnimationFrame(scrollFrame)
+  document.removeEventListener('keydown', escapeSort, true)
+  window.removeEventListener('blur', cancelSort)
+  if (previous?.handle.hasPointerCapture(previous.pointerId))
+    previous.handle.releasePointerCapture(previous.pointerId)
+}
+function escapeSort(event: KeyboardEvent) {
+  if (event.key !== 'Escape') return
+  event.preventDefault()
+  event.stopImmediatePropagation()
+  cancelSort()
+}
+function startSort(event: PointerEvent, link: ProjectLink) {
+  if (!event.isPrimary || event.button !== 0 || busy.value || show.value || links.value.length < 2)
+    return
+  event.preventDefault()
+  cancelSort()
+  const handle = event.currentTarget as HTMLButtonElement
+  handle.focus({ preventScroll: true })
+  handle.setPointerCapture(event.pointerId)
+  drag = {
+    id: link.id,
+    pointerId: event.pointerId,
+    handle,
+    startX: event.clientX,
+    startY: event.clientY,
+    x: event.clientX,
+    y: event.clientY,
+  }
+  document.addEventListener('keydown', escapeSort, true)
+  window.addEventListener('blur', cancelSort)
+}
+function moveSort(event: PointerEvent) {
+  if (!drag || drag.pointerId !== event.pointerId) return
+  drag.x = event.clientX
+  drag.y = event.clientY
+  if (!draggingId.value) {
+    if (Math.hypot(drag.x - drag.startX, drag.y - drag.startY) < 5) return
+    draggingId.value = drag.id
+    scrollFrame = requestAnimationFrame(autoScroll)
+  }
+  event.preventDefault()
+  updateDropTarget()
+}
+function finishSort(event: PointerEvent) {
+  if (!drag || drag.pointerId !== event.pointerId) return
+  updateDropTarget()
+  const id = draggingId.value
+  const before = dropBefore.value
+  cancelSort()
+  if (!id || before === undefined) return
+  const item = links.value.find((link) => link.id === id)
+  if (!item) return
+  const next = links.value.filter((link) => link.id !== id)
+  const index = before === null ? next.length : next.findIndex((link) => link.id === before)
+  if (index < 0) return
+  next.splice(index, 0, item)
+  void saveOrder(next)
+}
+async function saveOrder(next: ProjectLink[], focusId?: string) {
+  if (busy.value || next.every((link, index) => link.id === links.value[index]?.id)) return
+  const projectId = props.project.id
+  pendingLinks.value = next
+  busy.value = true
+  try {
+    await persist(next)
+    if (props.project.id === projectId) message.success('链接顺序已保存')
+  } catch (cause) {
+    if (props.project.id === projectId) message.error(errorMessage(cause))
+  } finally {
+    pendingLinks.value = null
+    busy.value = false
+    if (focusId && props.project.id === projectId) {
+      await nextTick()
+      const row = [
+        ...(listElement.value?.querySelectorAll<HTMLElement>('.project-link-row') ?? []),
+      ].find((item) => item.dataset.linkId === focusId)
+      row
+        ?.querySelector<HTMLButtonElement>('.project-link-sort-handle')
+        ?.focus({ preventScroll: true })
+    }
+  }
+}
+function moveWithKeyboard(id: string, offset: number) {
+  if (drag || busy.value || show.value) return
+  const next = [...links.value]
+  const index = next.findIndex((link) => link.id === id)
+  const target = index + offset
+  if (index < 0 || target < 0 || target >= next.length) return
+  const [item] = next.splice(index, 1)
+  next.splice(target, 0, item!)
+  void saveOrder(next, id)
+}
 async function open(link: ProjectLink) {
   try {
     await openProjectLink(link.url)
@@ -168,12 +322,44 @@ async function open(link: ProjectLink) {
   <section class="panel project-links-panel" aria-label="项目链接列表">
     <div class="panel-heading">
       <h2>项目链接</h2>
-      <NButton type="primary" :disabled="busy || links.length >= 50" @click="edit()"
+      <NButton type="primary" :disabled="busy || !!draggingId || links.length >= 50" @click="edit()"
         ><AppIcon name="plus" :size="17" />添加链接</NButton
       >
     </div>
-    <ul v-if="links.length" class="project-links-list">
-      <li v-for="link in links" :key="link.id" class="project-link-row">
+    <ul
+      v-if="links.length"
+      ref="listElement"
+      class="project-links-list"
+      :class="{ 'is-sorting': draggingId, 'drop-at-end': draggingId && dropBefore === null }"
+      :aria-busy="busy"
+      @dragstart.prevent
+    >
+      <li
+        v-for="link in links"
+        :key="link.id"
+        class="project-link-row"
+        :data-link-id="link.id"
+        :class="{
+          'is-dragging': draggingId === link.id,
+          'drop-before': draggingId && dropBefore === link.id,
+        }"
+      >
+        <button
+          type="button"
+          class="icon-button project-link-sort-handle"
+          :aria-label="`拖拽排序 ${link.name}`"
+          aria-keyshortcuts="ArrowUp ArrowDown"
+          :disabled="busy || links.length < 2"
+          @pointerdown="startSort($event, link)"
+          @pointermove="moveSort"
+          @pointerup="finishSort"
+          @pointercancel="cancelSort"
+          @lostpointercapture="cancelSort"
+          @keydown.up.prevent="moveWithKeyboard(link.id, -1)"
+          @keydown.down.prevent="moveWithKeyboard(link.id, 1)"
+        >
+          <AppIcon name="drag" :size="18" />
+        </button>
         <button
           class="project-link-entry"
           :aria-label="`打开链接 ${link.name}`"
@@ -188,7 +374,7 @@ async function open(link: ProjectLink) {
         <IconHint text="编辑"
           ><button
             class="icon-button"
-            :disabled="busy"
+            :disabled="busy || !!draggingId"
             :aria-label="`编辑链接 ${link.name}`"
             @click="edit(link)"
           >
@@ -203,7 +389,7 @@ async function open(link: ProjectLink) {
               ><IconHint text="删除"
                 ><button
                   class="icon-button danger-text"
-                  :disabled="busy"
+                  :disabled="busy || !!draggingId"
                   :aria-label="`删除链接 ${link.name}`"
                 >
                   <AppIcon name="delete" :size="18" /></button></IconHint></span></template
