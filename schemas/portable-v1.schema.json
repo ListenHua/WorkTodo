@@ -1,0 +1,602 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "项目工作台目录协议 1",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/workspace"
+    },
+    {
+      "$ref": "#/$defs/project"
+    },
+    {
+      "$ref": "#/$defs/todos"
+    },
+    {
+      "$ref": "#/$defs/draft"
+    }
+  ],
+  "$defs": {
+    "workspace": {
+      "type": "object",
+      "properties": {
+        "formatVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "workspace"
+        },
+        "workspaceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "preferences": {
+          "type": "object",
+          "properties": {
+            "appearance": {
+              "enum": ["light", "dark", "system"]
+            },
+            "desktop": {
+              "type": "object",
+              "properties": {
+                "closeToTray": {
+                  "type": "boolean"
+                },
+                "notifications": {
+                  "type": "boolean"
+                },
+                "autostart": {
+                  "type": "boolean"
+                }
+              },
+              "required": ["closeToTray", "notifications", "autostart"],
+              "additionalProperties": true
+            },
+            "capture": {
+              "type": "object",
+              "properties": {
+                "shortcut": {
+                  "type": "string"
+                },
+                "middleCapture": {
+                  "type": "boolean"
+                },
+                "captureTrigger": {
+                  "type": "string"
+                },
+                "middleHoldMs": {
+                  "type": "integer"
+                }
+              },
+              "required": ["shortcut", "middleCapture", "captureTrigger", "middleHoldMs"],
+              "additionalProperties": true
+            },
+            "network": {
+              "type": "object",
+              "properties": {
+                "strictOffline": {
+                  "type": "boolean"
+                }
+              },
+              "required": ["strictOffline"],
+              "additionalProperties": true
+            },
+            "extra": {
+              "type": "object"
+            }
+          },
+          "required": ["appearance", "desktop", "capture", "network", "extra"],
+          "additionalProperties": true
+        },
+        "uiState": {
+          "type": "object"
+        },
+        "projects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "directory": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^\\\\:]+$"
+              }
+            },
+            "required": ["id", "directory"],
+            "additionalProperties": true
+          }
+        },
+        "drafts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "document": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^\\\\:]+$"
+              }
+            },
+            "required": ["id", "document"],
+            "additionalProperties": true
+          }
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/file"
+          }
+        },
+        "fileOperations": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "tombstones": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "snapshot": {
+          "type": "object",
+          "properties": {
+            "commitId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "documents": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^\\\\:]+$"
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  }
+                },
+                "required": ["path", "revision", "sha256"],
+                "additionalProperties": true
+              }
+            }
+          },
+          "required": ["commitId", "documents"],
+          "additionalProperties": true
+        },
+        "updatedAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "formatVersion",
+        "kind",
+        "workspaceId",
+        "revision",
+        "preferences",
+        "uiState",
+        "projects",
+        "drafts",
+        "files",
+        "fileOperations",
+        "tombstones",
+        "snapshot",
+        "updatedAt"
+      ],
+      "additionalProperties": true
+    },
+    "project": {
+      "type": "object",
+      "properties": {
+        "formatVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "project"
+        },
+        "workspaceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "type": "string"
+        },
+        "directory": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^\\\\:]+$"
+        },
+        "description": {
+          "type": "string"
+        },
+        "color": {
+          "type": "string",
+          "pattern": "^#[a-fA-F0-9]{6}$"
+        },
+        "status": {
+          "enum": ["active", "completed", "archived"]
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "pinned": {
+          "type": "boolean"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "color": {
+                "type": "string",
+                "pattern": "^#[a-fA-F0-9]{6}$"
+              }
+            },
+            "required": ["name", "color"],
+            "additionalProperties": true
+          }
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/link"
+          }
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/file"
+          }
+        },
+        "tombstones": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "updatedAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "formatVersion",
+        "kind",
+        "workspaceId",
+        "revision",
+        "id",
+        "name",
+        "directory",
+        "description",
+        "color",
+        "status",
+        "createdAt",
+        "pinned",
+        "tags",
+        "links",
+        "files",
+        "tombstones",
+        "updatedAt"
+      ],
+      "additionalProperties": true
+    },
+    "todos": {
+      "type": "object",
+      "properties": {
+        "formatVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "todos"
+        },
+        "workspaceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "owner": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "enum": ["workspace", "project"]
+            },
+            "id": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "required": ["type", "id"],
+          "additionalProperties": true
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/task"
+          }
+        },
+        "tombstones": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "updatedAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "formatVersion",
+        "kind",
+        "workspaceId",
+        "revision",
+        "owner",
+        "tasks",
+        "tombstones",
+        "updatedAt"
+      ],
+      "additionalProperties": true
+    },
+    "draft": {
+      "type": "object",
+      "properties": {
+        "formatVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "draft"
+        },
+        "workspaceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "text": {
+          "type": "string"
+        },
+        "targetProjectId": {
+          "type": ["string", "null"]
+        },
+        "attachments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "relativePath": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^\\\\:]+$"
+              },
+              "mime": {
+                "type": "string"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "required": ["relativePath", "mime", "sha256"],
+            "additionalProperties": true
+          }
+        },
+        "updatedAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "formatVersion",
+        "kind",
+        "workspaceId",
+        "revision",
+        "id",
+        "text",
+        "targetProjectId",
+        "attachments",
+        "updatedAt"
+      ],
+      "additionalProperties": true
+    },
+    "file": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "relativePath": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^\\\\:]+$"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "modifiedAt": {
+          "type": "string"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": ["id", "relativePath", "size", "modifiedAt", "sha256"],
+      "additionalProperties": true
+    },
+    "task": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 10000
+        },
+        "status": {
+          "enum": ["todo", "doing", "done", "canceled"]
+        },
+        "priority": {
+          "enum": ["none", "low", "medium", "high"]
+        },
+        "planDate": {
+          "type": ["string", "null"]
+        },
+        "dueAt": {
+          "type": ["string", "null"]
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "string"
+        },
+        "completedAt": {
+          "type": ["string", "null"]
+        },
+        "deletedAt": {
+          "type": ["string", "null"]
+        },
+        "attachmentIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "reminders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "remindAt": {
+                "type": "string"
+              },
+              "state": {
+                "enum": ["pending", "sent", "dismissed"]
+              },
+              "readAt": {
+                "type": ["string", "null"]
+              },
+              "sentAt": {
+                "type": ["string", "null"]
+              }
+            },
+            "required": ["id", "remindAt", "state", "readAt", "sentAt"],
+            "additionalProperties": true
+          }
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "description",
+        "status",
+        "priority",
+        "planDate",
+        "dueAt",
+        "createdAt",
+        "updatedAt",
+        "completedAt",
+        "deletedAt",
+        "attachmentIds",
+        "reminders"
+      ],
+      "additionalProperties": true
+    },
+    "link": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "icon": {
+          "enum": ["", "github", "gitlab", "gitee", "website"]
+        },
+        "iconAsset": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^\\\\:]+$"
+            },
+            "mime": {
+              "type": "string"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "required": ["path", "mime", "sha256"],
+          "additionalProperties": true
+        }
+      },
+      "required": ["id", "name", "url", "icon"],
+      "additionalProperties": true
+    }
+  }
+}
