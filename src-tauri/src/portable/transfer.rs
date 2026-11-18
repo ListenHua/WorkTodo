@@ -273,7 +273,7 @@ pub fn backup(bootstrap: &Path, destination: &Path) -> AppResult<PathBuf> {
         &json!({"format":2,"formatVersion":1,"recoveryCount":recovery_count,"recoveryNote":"恢复附录未自动合并到待办","appVersion":env!("CARGO_PKG_VERSION"),"createdAt":chrono::Utc::now().to_rfc3339(),"sha256":hashes}),
     )?;
     let final_path = destination.join(format!(
-        "项目工作台备份-{}-{}",
+        "WorkTodo备份-{}-{}",
         chrono::Utc::now().format("%Y%m%d-%H%M%S"),
         Uuid::new_v4()
     ));

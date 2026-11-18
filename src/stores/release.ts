@@ -58,7 +58,7 @@ export const useReleaseStore = defineStore('release', () => {
   }
   const diagnostic = computed(() =>
     [
-      '项目工作台',
+      'WorkTodo',
       `版本：${info.value.version}${internal ? '（内部测试版）' : ''}${desktop ? '' : '（浏览器预览）'}`,
       `系统：${info.value.platform}`,
       `架构：${info.value.arch ?? '不适用'}`,

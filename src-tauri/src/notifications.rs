@@ -79,7 +79,7 @@ pub fn send(
         if permission(app, false)? != "granted" {
             return Err(AppError::new(
                 "NOTIFICATION_PERMISSION",
-                "系统通知未开启，请允许项目工作台发送通知",
+                "系统通知未开启，请允许WorkTodo发送通知",
             ));
         }
         #[cfg(target_os = "macos")]
@@ -128,7 +128,7 @@ pub fn open_settings(app: &AppHandle) -> AppResult<()> {
         let _ = app;
         Err(AppError::new(
             "NOTIFICATION_ERROR",
-            "请在系统设置中打开项目工作台的通知权限",
+            "请在系统设置中打开WorkTodo的通知权限",
         ))
     }
     #[cfg(any(target_os = "macos", target_os = "windows"))]

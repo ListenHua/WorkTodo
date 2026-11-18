@@ -1,6 +1,6 @@
-# 项目工作台
+# WorkTodo
 
-项目工作台是一款面向 macOS 和 Windows 的本地项目与待办桌面应用。无需账号，项目、待办、配置、文字与图片草稿保存在工作目录的 JSON 和资源文件中；SQLite 作为本机可重建查询缓存。旧安装可复制升级，保留原数据。
+WorkTodo是一款面向 macOS 和 Windows 的本地项目与待办桌面应用。无需账号，项目、待办、配置、文字与图片草稿保存在工作目录的 JSON 和资源文件中；SQLite 作为本机可重建查询缓存。旧安装可复制升级，保留原数据。
 
 当前版本：**0.0.1**。
 
@@ -73,10 +73,12 @@ pnpm desktop:dev
 
 `docs/` 和独立测试用例仅在本地保留，不随仓库分发。`pnpm test`、`pnpm test:watch` 和 `pnpm test:e2e` 需要本地测试文件，CI 和发布检查不调用这些命令。
 
-macOS 安装：打开 DMG，将左侧“项目工作台”应用拖入右侧“应用程序”文件夹，复制完成后从“应用程序”启动。安装盘包含固定的左右布局、箭头和中文说明。构建 DMG 需要可用的 Finder 会话；若系统询问自动化权限，请允许构建终端控制 Finder，以便写入安装界面布局。背景资源已随仓库保存，调整背景后可在 macOS 运行 `swift scripts/generate-dmg-background.swift` 重新生成。
+macOS 安装：打开 DMG，将左侧“WorkTodo”应用拖入右侧“应用程序”文件夹，复制完成后从“应用程序”启动。安装盘包含固定的左右布局、箭头和中文说明。构建 DMG 需要可用的 Finder 会话；若系统询问自动化权限，请允许构建终端控制 Finder，以便写入安装界面布局。背景资源已随仓库保存，调整背景后可在 macOS 运行 `swift scripts/generate-dmg-background.swift` 重新生成。
 
 设置中的“关于”可查看当前版本、离线更新日志并复制版本信息。GitHub Release 提供 macOS Apple Silicon DMG 和 Windows x64 安装器。
 
 私钥、签名证书和签名产物不纳入版本管理。构建和签名校验脚本随源码保留，正式签名材料在构建时从本机或 CI 环境提供。
 
 更新日期：2026-11-17。
+
+Release 附件仅提供 WorkTodo 的 macOS DMG、Windows EXE 安装器，以及两个平台各自的应用 ZIP 压缩包；更新日志放在发布正文，构建报告和校验文件仅用于内部验证。Windows 应用压缩包解压后运行 `WorkTodo.exe`，需要系统已安装 WebView2 Runtime。

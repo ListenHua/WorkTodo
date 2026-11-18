@@ -26,7 +26,7 @@ const notificationMessage = computed(() => {
   if (!status) return '正在检查系统通知…'
   if (!status.enabled) return '后台提醒已关闭'
   if (status.permission === 'notDetermined') return '开启系统通知后，待办到期会在电脑上提醒'
-  if (status.permission === 'denied') return '系统通知未开启，请在系统设置中允许项目工作台发送通知'
+  if (status.permission === 'denied') return '系统通知未开启，请在系统设置中允许WorkTodo发送通知'
   return status.error || '系统通知已开启'
 })
 async function loadNotificationStatus() {

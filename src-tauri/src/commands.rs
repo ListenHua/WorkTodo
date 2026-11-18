@@ -475,7 +475,7 @@ pub async fn data_action(
             .file()
             .set_title(match dialog_action.as_str() {
                 "backup" => "选择备份保存位置",
-                "restore" => "选择项目工作台备份文件夹",
+                "restore" => "选择WorkTodo备份文件夹",
                 "import" => "选择要导入为副本的项目文件夹",
                 _ => "选择新的存储文件夹",
             })
@@ -675,9 +675,9 @@ pub async fn notification_test(app: AppHandle) -> AppResult<()> {
         crate::notifications::permission(&app, true)?;
         crate::notifications::send(
             &app,
-            "project-manage-test",
+            "worktodo-test",
             -1,
-            "项目工作台",
+            "WorkTodo",
             "系统通知已连接",
             None,
         )

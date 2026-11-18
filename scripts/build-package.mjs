@@ -63,7 +63,7 @@ try {
   const profileRoot = join(targetRoot, ...(explicitTarget ? [target] : []), 'release')
   bundleRoot = join(profileRoot, 'bundle')
   await mkdir(profileRoot, { recursive: true })
-  const lockPath = join(targetRoot, '.project-manage-package.lock')
+  const lockPath = join(targetRoot, '.worktodo-package.lock')
   await mkdir(lockPath).catch((error) => {
     if (error.code === 'EEXIST')
       throw new Error(`已有打包任务或上次异常退出，请先检查：${lockPath}`)

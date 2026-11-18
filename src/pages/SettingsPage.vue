@@ -485,7 +485,7 @@ onUnmounted(() => {
             v-if="runtime.isMacos && (!runtime.middlePermission || needsInputMonitoring)"
             class="form-error"
           >
-            请在系统隐私设置中允许当前运行的“项目工作台”。授权后返回此处重新检测；如果系统要求退出应用，请从托盘退出后重新打开。
+            请在系统隐私设置中允许当前运行的“WorkTodo”。授权后返回此处重新检测；如果系统要求退出应用，请从托盘退出后重新打开。
           </p>
           <div class="dialog-footer">
             <NButton

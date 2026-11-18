@@ -85,11 +85,11 @@ jobs:
           assets=()
           for asset in release-staging/*; do
             case "$asset" in
-              *.dmg|*-setup.exe) assets+=("$asset") ;;
+              WorkTodo_*.dmg|WorkTodo_*-setup.exe|WorkTodo_*.app.zip) assets+=("$asset") ;;
             esac
           done
-          if [[ "${#assets[@]}" -ne 2 ]]; then
-            echo "发布草稿必须且仅包含一个 Mac DMG 和一个 Windows 安装器"
+          if [[ "${#assets[@]}" -ne 4 ]]; then
+            echo "发布草稿必须且仅包含 Mac DMG、Windows 安装器以及各自的应用压缩包"
             exit 1
           fi
           gh release create "v$RELEASE_VERSION" "${assets[@]}" \

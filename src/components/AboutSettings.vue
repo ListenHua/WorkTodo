@@ -30,11 +30,11 @@ async function copyInfo() {
 </script>
 
 <template>
-  <section class="about-settings" aria-label="关于项目工作台">
+  <section class="about-settings" aria-label="关于WorkTodo">
     <div class="about-identity">
       <img src="/app-icon.svg" width="64" height="64" alt="" />
       <div>
-        <h2>项目工作台</h2>
+        <h2>WorkTodo</h2>
         <p class="about-version">
           v{{ release.info.version }}<span v-if="release.internal">内部测试版</span>
         </p>

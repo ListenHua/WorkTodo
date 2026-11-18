@@ -148,9 +148,9 @@ onUnmounted(() => {
   <div class="app-shell">
     <aside class="sidebar">
       <IconHint text="概览" :disabled="!compactSidebar"
-        ><RouterLink to="/" class="brand" aria-label="项目工作台"
+        ><RouterLink to="/" class="brand" aria-label="WorkTodo"
           ><span class="brand-symbol"><AppIcon name="brand" :size="23" /></span
-          ><span>项目工作台</span></RouterLink
+          ><span>WorkTodo</span></RouterLink
         ></IconHint
       >
       <nav aria-label="主导航">

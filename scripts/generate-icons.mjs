@@ -32,7 +32,7 @@ const destination = join(root, 'src-tauri/icons')
 await mkdir(destination, { recursive: true })
 await writeFile(join(root, 'public/app-icon.svg'), svg)
 await writeFile(join(destination, 'icon-macos.svg'), macosSvg)
-const output = await mkdtemp(join(tmpdir(), 'project-manage-icons-'))
+const output = await mkdtemp(join(tmpdir(), 'worktodo-icons-'))
 try {
   const generate = (source, outputDirectory) =>
     execFileSync(

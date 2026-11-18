@@ -1,13 +1,13 @@
 [package]
-name = "project-manage"
+name = "worktodo"
 version = "0.0.2"
 description = "Local-first project and task workspace"
-authors = ["Project Manage"]
+authors = ["WorkTodo"]
 edition = "2021"
 rust-version = "1.90"
 
 [lib]
-name = "project_manage_lib"
+name = "worktodo_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]

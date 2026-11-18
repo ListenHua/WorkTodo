@@ -108,7 +108,7 @@ pub fn permission(request: bool) -> AppResult<String> {
     if NSBundle::mainBundle().bundleIdentifier().is_none() {
         return Err(AppError::new(
             "NOTIFICATION_UNAVAILABLE",
-            "请安装并打开项目工作台后使用系统通知",
+            "请安装并打开WorkTodo后使用系统通知",
         ));
     }
     let center = UNUserNotificationCenter::currentNotificationCenter();

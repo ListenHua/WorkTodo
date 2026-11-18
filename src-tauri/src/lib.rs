@@ -139,7 +139,7 @@ pub fn run() {
             commands::files_accept_changes,
         ])
         .build(context)
-        .expect("无法启动项目工作台")
+        .expect("无法启动WorkTodo")
         .run(move |app, event| {
             if let tauri::RunEvent::ExitRequested { api, .. } = &event {
                 use std::sync::atomic::Ordering;

@@ -44,7 +44,7 @@ func text(_ value: String, y: CGFloat, size: CGFloat, weight: NSFont.Weight, ink
 color(247, 249, 253).setFill()
 NSBezierPath(rect: NSRect(x: 0, y: 0, width: width, height: height)).fill()
 
-text("安装项目工作台", y: 48, size: 26, weight: .semibold, ink: color(29, 39, 59))
+text("安装WorkTodo", y: 48, size: 26, weight: .semibold, ink: color(29, 39, 59))
 text("拖入应用程序，即可完成安装", y: 89, size: 14, weight: .regular, ink: color(109, 121, 142))
 
 // Subtle wells frame the real, draggable Finder icons.
@@ -76,7 +76,7 @@ divider.line(to: NSPoint(x: 612, y: 326))
 divider.lineWidth = 1
 divider.stroke()
 text("将左侧应用拖到右侧「应用程序」文件夹", y: 347, size: 14, weight: .medium, ink: color(72, 87, 112))
-text("安装完成后，从「应用程序」打开项目工作台", y: 373, size: 12, weight: .regular, ink: color(129, 141, 160))
+text("安装完成后，从「应用程序」打开WorkTodo", y: 373, size: 12, weight: .regular, ink: color(129, 141, 160))
 
 NSGraphicsContext.current = nil
 bitmap.size = NSSize(width: width, height: height)

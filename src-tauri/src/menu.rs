@@ -4,7 +4,7 @@ use tauri::{
 };
 
 pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
-    let name = app.config().product_name.as_deref().unwrap_or("项目工作台");
+    let name = app.config().product_name.as_deref().unwrap_or("WorkTodo");
     let about = AboutMetadata {
         name: Some(name.to_owned()),
         version: Some(app.package_info().version.to_string()),
@@ -40,7 +40,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         true,
         &[
             #[cfg(not(target_os = "macos"))]
-            &PredefinedMenuItem::about(app, Some("关于项目工作台"), Some(about))?,
+            &PredefinedMenuItem::about(app, Some("关于WorkTodo"), Some(about))?,
         ],
     )?;
 
@@ -53,15 +53,15 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
                 name,
                 true,
                 &[
-                    &PredefinedMenuItem::about(app, Some("关于项目工作台"), Some(about))?,
+                    &PredefinedMenuItem::about(app, Some("关于WorkTodo"), Some(about))?,
                     &PredefinedMenuItem::separator(app)?,
                     &PredefinedMenuItem::services(app, Some("服务"))?,
                     &PredefinedMenuItem::separator(app)?,
-                    &PredefinedMenuItem::hide(app, Some("隐藏项目工作台"))?,
+                    &PredefinedMenuItem::hide(app, Some("隐藏WorkTodo"))?,
                     &PredefinedMenuItem::hide_others(app, Some("隐藏其他应用"))?,
                     &PredefinedMenuItem::show_all(app, Some("显示全部"))?,
                     &PredefinedMenuItem::separator(app)?,
-                    &PredefinedMenuItem::quit(app, Some("退出项目工作台"))?,
+                    &PredefinedMenuItem::quit(app, Some("退出WorkTodo"))?,
                 ],
             )?,
             &Submenu::with_items(
@@ -71,7 +71,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
                 &[
                     &PredefinedMenuItem::close_window(app, Some("关闭窗口"))?,
                     #[cfg(not(target_os = "macos"))]
-                    &PredefinedMenuItem::quit(app, Some("退出项目工作台"))?,
+                    &PredefinedMenuItem::quit(app, Some("退出WorkTodo"))?,
                 ],
             )?,
             &Submenu::with_items(

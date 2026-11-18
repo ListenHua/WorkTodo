@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { cp, lstat, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { gitInfo, readRepository, releaseBody, root } from './release.mjs'
 
@@ -89,7 +90,7 @@ export async function reportPackages(bundleRoot, directory = root) {
         : file.endsWith('.msi')
           ? '.msi'
           : '.dmg'
-    const name = `project-manage_${context.version}_${target.os}_${target.arch}${suffix}`
+    const name = `WorkTodo_${context.version}_${target.os}_${target.arch}${suffix}`
     if (destinations.has(name)) throw new Error('发现重复安装包，请检查输出目录')
     destinations.add(name)
   }
@@ -134,6 +135,44 @@ export async function reportPackages(bundleRoot, directory = root) {
         bytes: (await stat(output)).size,
         sha256: await checksum(output),
       })
+    }
+    if (target.os === 'windows') {
+      const executable = resolve(bundleRoot, '..', 'worktodo.exe')
+      if (!(await readFile(executable)).subarray(0, 2).equals(Buffer.from('MZ')))
+        throw new Error('Windows 应用程序不存在或不是有效的 EXE')
+      const temporary = await mkdtemp(join(tmpdir(), 'worktodo-portable-'))
+      try {
+        const application = join(temporary, 'WorkTodo.exe')
+        await cp(executable, application, { errorOnExist: true, force: false })
+        const name = `WorkTodo_${context.version}_${target.os}_${target.arch}.app.zip`
+        const output = join(destination, name)
+        if (process.platform === 'win32')
+          execFileSync(
+            'powershell.exe',
+            [
+              '-NoProfile',
+              '-NonInteractive',
+              '-Command',
+              "$ErrorActionPreference = 'Stop'; Compress-Archive -LiteralPath $env:WORKTODO_PORTABLE_SOURCE -DestinationPath $env:WORKTODO_PORTABLE_OUTPUT -CompressionLevel Optimal",
+            ],
+            {
+              env: {
+                ...process.env,
+                WORKTODO_PORTABLE_SOURCE: application,
+                WORKTODO_PORTABLE_OUTPUT: output,
+              },
+              stdio: 'pipe',
+            },
+          )
+        else execFileSync('/usr/bin/ditto', ['-c', '-k', application, output])
+        packages.push({
+          file: name,
+          bytes: (await stat(output)).size,
+          sha256: await checksum(output),
+        })
+      } finally {
+        await rm(temporary, { recursive: true, force: true })
+      }
     }
     const schema = Number(
       (await readFile(join(directory, 'src-tauri/src/db.rs'), 'utf8')).match(
@@ -198,8 +237,7 @@ export async function stageDraft(downloadRoot, output, directory = root) {
   const reports = await findReports(downloadRoot)
   if (reports.length !== 2) throw new Error('草稿需要且仅接受一份 macOS 和一份 Windows 构建报告')
   const targets = new Set(),
-    assets = [],
-    hashes = []
+    assets = []
   let releaseType
   for (const report of reports) {
     const metadata = JSON.parse(await readFile(report, 'utf8'))
@@ -236,12 +274,10 @@ export async function stageDraft(downloadRoot, output, directory = root) {
         typeof item.file !== 'string' ||
         basename(item.file) !== item.file ||
         item.file.includes('\\') ||
-        !item.file.startsWith(
-          `project-manage_${repository.version}_${expected.os}_${expected.arch}`,
-        ) ||
+        !item.file.startsWith(`WorkTodo_${repository.version}_${expected.os}_${expected.arch}`) ||
         !(expected.os === 'macos'
           ? /\.(dmg|app\.zip)$/.test(item.file)
-          : /\.(exe|msi)$/.test(item.file)) ||
+          : /\.(exe|msi|app\.zip)$/.test(item.file)) ||
         !Number.isSafeInteger(item.bytes) ||
         item.bytes <= 0 ||
         !/^[a-f0-9]{64}$/.test(item.sha256)
@@ -256,14 +292,22 @@ export async function stageDraft(downloadRoot, output, directory = root) {
         throw new Error('安装包内容与构建报告不一致')
       if (assets.some((asset) => asset.name === item.file)) throw new Error('安装包名称冲突')
       assets.push({ file, name: item.file })
-      hashes.push(`${item.sha256}  ${item.file}`)
     }
-    assets.push({ file: report, name: `build-metadata_${expected.triple}.json` })
   }
+  const required = [
+    `WorkTodo_${repository.version}_macos_aarch64.dmg`,
+    `WorkTodo_${repository.version}_macos_aarch64.app.zip`,
+    `WorkTodo_${repository.version}_windows_x86_64-setup.exe`,
+    `WorkTodo_${repository.version}_windows_x86_64.app.zip`,
+  ]
+  if (
+    assets.length !== required.length ||
+    required.some((name) => !assets.some((asset) => asset.name === name))
+  )
+    throw new Error('发布资源必须且仅包含 macOS、Windows 的安装包与各自的应用压缩包')
   await mkdir(output, { recursive: false })
   for (const asset of assets)
     await cp(asset.file, join(output, asset.name), { errorOnExist: true, force: false })
-  await writeFile(join(output, 'SHA256SUMS.txt'), hashes.sort().join('\n') + '\n')
   await writeFile(
     join(output, 'release-notes.md'),
     `# v${repository.version}\n\n${releaseBody(repository.current, { initial: repository.current === repository.log.releases.at(-1) })}\n\n支持目标：macOS Apple Silicon、Windows x64。\n`,

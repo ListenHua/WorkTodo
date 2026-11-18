@@ -128,7 +128,7 @@ export async function readRepository(
     .match(/\[package\]([\s\S]*?)(?=\n\[|$)/)?.[1]
     .match(/^version\s*=\s*"([^"]+)"/m)?.[1]
   const locked = texts['src-tauri/Cargo.lock'].match(
-    /\[\[package\]\]\r?\nname = "project-manage"\r?\nversion = "([^"]+)"/,
+    /\[\[package\]\]\r?\nname = "worktodo"\r?\nversion = "([^"]+)"/,
   )?.[1]
   if (
     [JSON.parse(texts['src-tauri/tauri.conf.json']).version, cargo, locked].some(
@@ -217,7 +217,7 @@ export function prepareVersionChanges(repository, target) {
       (_, prefix, suffix) => `${prefix}${target}${suffix}`,
     ),
     'src-tauri/Cargo.lock': texts['src-tauri/Cargo.lock'].replace(
-      /(\[\[package\]\]\r?\nname = "project-manage"\r?\nversion = ")[^"]+(".*$)/m,
+      /(\[\[package\]\]\r?\nname = "worktodo"\r?\nversion = ")[^"]+(".*$)/m,
       (_, prefix, suffix) => `${prefix}${target}${suffix}`,
     ),
     'changelog.json': JSON.stringify(log, null, 2) + '\n',

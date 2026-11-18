@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "项目工作台目录协议 1",
+  "title": "WorkTodo目录协议 1",
   "oneOf": [
     {
       "$ref": "#/$defs/workspace"

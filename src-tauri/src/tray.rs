@@ -98,7 +98,7 @@ pub fn initialize(app: &AppHandle) -> AppResult<()> {
             .into_rgba8();
         let (width, height) = pixels.dimensions();
         TrayIconBuilder::with_id("workspace-tray")
-            .tooltip("项目工作台")
+            .tooltip("WorkTodo")
             .icon(tauri::image::Image::new_owned(
                 pixels.into_raw(),
                 width,

@@ -15,7 +15,7 @@ const svg = await renderToString(
 )
 const source = join(root, 'src-tauri/icons/tray.svg')
 await writeFile(source, `${svg.replace(/<!--.*?-->/g, '')}\n`)
-const output = await mkdtemp(join(tmpdir(), 'project-manage-tray-'))
+const output = await mkdtemp(join(tmpdir(), 'worktodo-tray-'))
 try {
   execFileSync(
     process.execPath,

@@ -64,7 +64,7 @@ pub fn backup(db: &Connection, destination: &Path) -> AppResult<PathBuf> {
         ));
     }
     let name = format!(
-        "项目工作台备份-{}-{}",
+        "WorkTodo备份-{}-{}",
         Utc::now().format("%Y%m%d-%H%M%S"),
         &Uuid::new_v4().to_string()[..8]
     );
