@@ -6,6 +6,7 @@ import type {
   WorkspaceApi,
   WorkspaceStatus,
 } from '../shared/types'
+import { normalizePriority } from '../shared/task-priority'
 import { cancelPreviewReminders } from './preview-reminders-state'
 import { validateProjectName } from '../shared/domain'
 import { validateProjectLinks } from '../shared/project-links'
@@ -59,7 +60,8 @@ export function createPreviewApi(): WorkspaceApi {
         throw new Error('截止时间无效')
       if (
         [...input.description].length > 10000 ||
-        !['none', 'low', 'medium', 'high'].includes(input.priority) ||
+        (input.priority !== undefined &&
+          !['none', 'low', 'medium', 'high'].includes(input.priority)) ||
         !['todo', 'doing', 'done', 'canceled'].includes(input.status)
       )
         throw new Error('待办内容或状态无效')
@@ -70,7 +72,17 @@ export function createPreviewApi(): WorkspaceApi {
           new Date(input.planDate).toISOString().slice(0, 10) !== input.planDate)
       )
         throw new Error('计划日期无效')
-      Object.assign(task, input, { title: input.title.trim() })
+      const completedAt =
+        input.status === 'done'
+          ? task.status === 'done'
+            ? (task.completedAt ?? null)
+            : new Date().toISOString()
+          : null
+      Object.assign(task, input, {
+        title: input.title.trim(),
+        completedAt,
+        priority: normalizePriority(input.priority),
+      })
       if (['done', 'canceled'].includes(task.status)) cancelPreviewReminders(task.id)
       return { ...task }
     },
@@ -122,6 +134,17 @@ export function createPreviewApi(): WorkspaceApi {
       })
       return { ...project }
     },
+    async deleteProject(id) {
+      const index = projects.findIndex((project) => project.id === id)
+      if (index < 0) throw new Error('项目不存在')
+      const now = new Date().toISOString()
+      for (const task of tasks.filter((task) => task.projectId === id)) {
+        task.projectId = null
+        task.deletedAt = task.deletedAt || now
+        cancelPreviewReminders(task.id)
+      }
+      projects.splice(index, 1)
+    },
     async setProjectStatus(id, status, policy = 'inbox') {
       const project = projects.find((p) => p.id === id)
       if (!project) throw new Error('项目不存在')
@@ -132,7 +155,10 @@ export function createPreviewApi(): WorkspaceApi {
           (t) => t.projectId === id && !t.deletedAt && ['todo', 'doing'].includes(t.status),
         )) {
           if (policy === 'inbox') task.projectId = null
-          else task.status = policy === 'complete' ? 'done' : 'canceled'
+          else {
+            task.status = policy === 'complete' ? 'done' : 'canceled'
+            task.completedAt = policy === 'complete' ? new Date().toISOString() : null
+          }
         }
       project.status = status
     },
@@ -202,11 +228,18 @@ export function createPreviewApi(): WorkspaceApi {
         !projects.some((p) => p.id === input.projectId && p.status === 'active')
       )
         throw new Error('项目不存在')
+      if (
+        input.priority !== undefined &&
+        !['none', 'low', 'medium', 'high'].includes(input.priority)
+      )
+        throw new Error('优先级无效')
       const task: Task = {
         ...input,
+        priority: normalizePriority(input.priority),
         title,
         id: crypto.randomUUID(),
         status: 'todo',
+        completedAt: null,
         createdAt: new Date().toISOString(),
       }
       tasks.unshift(task)
@@ -215,6 +248,11 @@ export function createPreviewApi(): WorkspaceApi {
     async setTaskCompleted(id, completed) {
       const task = tasks.find((t) => t.id === id)
       if (!task) throw new Error('待办不存在')
+      task.completedAt = completed
+        ? task.status === 'done'
+          ? (task.completedAt ?? null)
+          : new Date().toISOString()
+        : null
       task.status = completed ? 'done' : 'todo'
       if (completed) cancelPreviewReminders(task.id)
     },

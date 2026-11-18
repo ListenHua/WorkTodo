@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { previewReminders as entries } from './preview-reminders-state'
 import { api, desktop } from './api'
+import { globalShortcutDefaults, globalShortcutConflict } from '../shared/global-shortcuts'
 export interface Reminder {
   id: string
   taskId: string
@@ -9,9 +10,15 @@ export interface Reminder {
   state: 'pending' | 'sent' | 'dismissed'
   readAt: string | null
 }
+export interface NotificationStatus {
+  permission: 'granted' | 'denied' | 'notDetermined'
+  enabled: boolean
+  error: string
+}
 export interface DesktopSettings {
   closeToTray: boolean
   shortcut: string
+  toggleShortcut: string
   middleCapture: boolean
   middleHoldMs: number
   captureTrigger: string
@@ -27,9 +34,10 @@ export interface DesktopStatus {
   middleListening: boolean
   isMacos: boolean
 }
+const previewMacos = typeof navigator !== 'undefined' && /Mac/i.test(navigator.userAgent)
 const defaults: DesktopSettings = {
   closeToTray: true,
-  shortcut: 'CommandOrControl+Shift+Space',
+  ...globalShortcutDefaults(previewMacos),
   middleCapture: false,
   middleHoldMs: 650,
   captureTrigger: 'MouseMiddle',
@@ -74,10 +82,26 @@ export const reminders = {
         readAt: null,
       })
   },
-  async action(id: string, action: 'read' | 'dismiss' | 'snooze') {
+  async action(id: string, action: 'read' | 'dismiss' | 'snooze' | 'retry') {
     if (desktop) return invoke<void>('reminders_action', { id, action })
     const entry = entries.find((r) => r.id === id)
     if (!entry) throw new Error('提醒不存在')
+    if (action === 'retry') {
+      const tasks = await api.listTasks()
+      const projects = await api.listProjects()
+      const task = tasks.find((task) => task.id === entry.taskId)
+      if (
+        !task ||
+        task.deletedAt ||
+        !['todo', 'doing'].includes(task.status) ||
+        (task.projectId &&
+          projects.find((project) => project.id === task.projectId)?.status !== 'active')
+      )
+        throw new Error('只有未完成待办可以再次提醒')
+      entry.state = 'pending'
+      entry.readAt = null
+      return
+    }
     if (action === 'snooze')
       await this.schedule(entry.taskId, new Date(Date.now() + 600000).toISOString())
     entry.readAt = new Date().toISOString()
@@ -116,7 +140,7 @@ export const desktopApi = {
           middlePermission: false,
           inputMonitoringPermission: false,
           middleListening: false,
-          isMacos: false,
+          isMacos: previewMacos,
         }
   },
   async save(input: DesktopSettings) {
@@ -127,7 +151,11 @@ export const desktopApi = {
     )
       throw new Error('长按时间需为 300–3000 毫秒的整数')
     if (desktop) await invoke('desktop_save', { input })
-    else previewSettings = { ...input }
+    else {
+      const conflict = globalShortcutConflict(input, previewMacos)
+      if (conflict) throw new Error(conflict)
+      previewSettings = { ...input }
+    }
   },
   async middlePermission(kind: 'accessibility' | 'input-monitoring') {
     if (desktop) await invoke('middle_permission', { kind })
@@ -138,6 +166,19 @@ export const desktopApi = {
   async autostart(enabled: boolean) {
     if (!desktop) throw new Error('请在桌面端设置开机启动')
     await invoke('desktop_autostart', { enabled })
+  },
+  async notificationStatus(): Promise<NotificationStatus> {
+    return desktop
+      ? invoke('notification_status')
+      : { permission: 'notDetermined', enabled: false, error: '' }
+  },
+  async notificationRequest(): Promise<NotificationStatus['permission']> {
+    if (!desktop) throw new Error('请在桌面端开启系统通知')
+    return invoke('notification_request')
+  },
+  async notificationSettings() {
+    if (!desktop) throw new Error('请在桌面端打开系统通知设置')
+    await invoke('notification_settings')
   },
   async notificationTest() {
     if (!desktop) throw new Error('请在桌面端测试系统通知')

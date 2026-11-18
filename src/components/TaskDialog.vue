@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { desktopApi } from '../services/desktop'
+import { normalizePriority } from '../shared/task-priority'
 import DateField from './DateField.vue'
 import TaskAttachments from './TaskAttachments.vue'
 import AppIcon from './AppIcon.vue'
@@ -27,7 +29,7 @@ function localTime(value?: string | null) {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
 }
 const projectId = ref('')
-const priority = ref<Priority>('none')
+const priority = ref<Priority>('low')
 const planDate = ref('')
 const busy = ref(false)
 const error = ref('')
@@ -53,7 +55,7 @@ watch(
       reminderAt.value = ''
       reminderTouched.value = false
       projectId.value = task ? task.projectId || '' : ui.defaultProjectId || ''
-      priority.value = task?.priority || 'none'
+      priority.value = normalizePriority(task?.priority)
       planDate.value = task?.planDate || ''
       error.value = ''
     }
@@ -83,6 +85,14 @@ async function save() {
     else await workspace.createFullTask(input)
     ui.taskDialog = false
     message.success('待办已保存')
+    if (input.reminderAt && workspace.desktop) {
+      try {
+        const permission = await desktopApi.notificationRequest()
+        if (permission !== 'granted') message.info('待办已保存，请在提醒中心开启系统通知')
+      } catch (cause) {
+        message.error(errorMessage(cause))
+      }
+    }
   } catch (cause) {
     error.value = errorMessage(cause)
   } finally {

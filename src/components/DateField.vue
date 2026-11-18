@@ -45,8 +45,7 @@ const shortcuts = { 今天: () => day(0), 明天: () => day(1), 一周后: () =>
       ></template>
       <template #prev-year
         ><IconHint text="上一年"
-          ><span
-            ><AppIcon name="arrow" :size="16" style="transform: rotate(180deg)" /></span></IconHint
+          ><span><AppIcon name="back" :size="16" /></span></IconHint
       ></template>
       <template #next-year
         ><IconHint text="下一年"

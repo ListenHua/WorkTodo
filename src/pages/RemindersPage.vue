@@ -3,7 +3,7 @@ import IconHint from '../components/IconHint.vue'
 import AppIcon from '../components/AppIcon.vue'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { NButton, NSelect } from 'naive-ui'
-import { reminders } from '../services/desktop'
+import { desktopApi, reminders, type NotificationStatus } from '../services/desktop'
 import type { Reminder } from '../services/desktop'
 import { useWorkspaceStore } from '../stores/workspace'
 import { useUiStore } from '../stores/ui'
@@ -17,6 +17,49 @@ const ui = useUiStore()
 const message = useAppMessage()
 const items = ref<Reminder[]>([])
 const filter = ref('all')
+const notificationStatus = ref<NotificationStatus | null>(null)
+const notificationError = ref('')
+const notificationBusy = ref(false)
+const notificationMessage = computed(() => {
+  if (notificationError.value) return notificationError.value
+  const status = notificationStatus.value
+  if (!status) return '正在检查系统通知…'
+  if (!status.enabled) return '后台提醒已关闭'
+  if (status.permission === 'notDetermined') return '开启系统通知后，待办到期会在电脑上提醒'
+  if (status.permission === 'denied') return '系统通知未开启，请在系统设置中允许项目工作台发送通知'
+  return status.error || '系统通知已开启'
+})
+async function loadNotificationStatus() {
+  if (!desktop) return
+  try {
+    notificationStatus.value = await desktopApi.notificationStatus()
+    notificationError.value = ''
+  } catch (cause) {
+    notificationError.value = errorMessage(cause)
+  }
+}
+async function notificationAction(action: 'enable' | 'settings' | 'test') {
+  if (notificationBusy.value) return
+  notificationBusy.value = true
+  try {
+    if (action === 'settings') await desktopApi.notificationSettings()
+    if (action === 'enable') {
+      const status = await desktopApi.status()
+      if (!status.settings.notifications)
+        await desktopApi.save({ ...status.settings, notifications: true })
+      await desktopApi.notificationRequest()
+    }
+    if (action === 'test') {
+      await desktopApi.notificationTest()
+      message.success('已提交测试通知，请查看系统通知中心')
+    }
+    await loadNotificationStatus()
+  } catch (cause) {
+    notificationError.value = errorMessage(cause)
+  } finally {
+    notificationBusy.value = false
+  }
+}
 const visibleItems = computed(() => {
   const query = ui.search.trim().toLocaleLowerCase()
   return items.value.filter(
@@ -30,11 +73,12 @@ let gone = false
 async function load() {
   try {
     items.value = await reminders.list()
+    await loadNotificationStatus()
   } catch (e) {
     message.error(errorMessage(e))
   }
 }
-async function action(id: string, action: 'read' | 'dismiss' | 'snooze') {
+async function action(id: string, action: 'read' | 'dismiss' | 'snooze' | 'retry') {
   try {
     await reminders.action(id, action)
     await load()
@@ -49,6 +93,7 @@ async function open(item: Reminder) {
   await action(item.id, 'read')
 }
 onMounted(async () => {
+  window.addEventListener('focus', loadNotificationStatus)
   await load()
   if (desktop) {
     const off = await listen('reminders-changed', load)
@@ -58,6 +103,7 @@ onMounted(async () => {
 })
 onUnmounted(() => {
   gone = true
+  window.removeEventListener('focus', loadNotificationStatus)
   unlisten?.()
 })
 </script>
@@ -81,6 +127,40 @@ onUnmounted(() => {
         ><template #arrow><AppIcon name="down" :size="16" /></template
       ></NSelect>
     </div>
+    <div v-if="workspace.desktop" class="reminder-notification-status" aria-label="系统通知状态">
+      <p class="muted" role="status">{{ notificationMessage }}</p>
+      <NButton
+        v-if="
+          notificationStatus &&
+          (!notificationStatus.enabled || notificationStatus.permission === 'notDetermined')
+        "
+        size="small"
+        :loading="notificationBusy"
+        @click="notificationAction('enable')"
+        >开启系统通知</NButton
+      >
+      <NButton
+        v-if="notificationStatus?.permission === 'denied'"
+        size="small"
+        :disabled="notificationBusy"
+        @click="notificationAction('settings')"
+        >打开系统通知设置</NButton
+      >
+      <NButton
+        v-if="notificationStatus?.permission === 'granted'"
+        size="small"
+        :loading="notificationBusy"
+        @click="notificationAction('test')"
+        >测试通知</NButton
+      >
+      <NButton
+        v-if="notificationError"
+        size="small"
+        :disabled="notificationBusy"
+        @click="loadNotificationStatus"
+        >重试</NButton
+      >
+    </div>
     <p v-if="!workspace.desktop" class="muted">预览仅展示提醒记录；系统通知在桌面端运行。</p>
     <div v-for="item in visibleItems" :key="item.id" class="reminder-row">
       <div class="reminder-info">
@@ -96,6 +176,12 @@ onUnmounted(() => {
           }}{{ item.readAt ? ' · 已读' : '' }}
         </p>
       </div>
+      <NButton
+        v-if="item.state === 'sent' && workspace.pending.some((task) => task.id === item.taskId)"
+        size="small"
+        @click="action(item.id, 'retry')"
+        >再次提醒</NButton
+      >
       <NButton v-if="item.state === 'sent'" size="small" @click="action(item.id, 'snooze')"
         >延后 10 分钟</NButton
       ><NButton v-if="item.state === 'pending'" size="small" @click="action(item.id, 'dismiss')"

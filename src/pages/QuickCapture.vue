@@ -152,7 +152,7 @@ async function save() {
       const task = await workspace.createTask({
         title: text.value.split('\n')[0]!.slice(0, 200),
         projectId: projectId.value || null,
-        priority: 'none',
+        priority: 'low',
         planDate: null,
       })
       await workspace.updateTask(task.id, {

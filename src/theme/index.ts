@@ -4,11 +4,19 @@ export type ThemeMode = 'light' | 'dark'
 export const themeStorageKey = 'project-manage:theme'
 
 export const themeColors = {
-  primary: '#1677FF',
-  primaryHover: '#4096FF',
-  primaryPressed: '#0958D9',
-  primarySoft: '#E6F4FF',
-  primaryBorder: '#BAE0FF',
+  primary: '#000000',
+  primaryHover: '#262626',
+  primaryPressed: '#000000',
+  primarySoft: '#F5F5F5',
+  primaryBorder: '#D4D4D4',
+} as const
+
+const darkThemeColors = {
+  primary: '#FFFFFF',
+  primaryHover: '#E5E5E5',
+  primaryPressed: '#D4D4D4',
+  primarySoft: '#262626',
+  primaryBorder: '#525252',
 } as const
 
 const sharedOverrides: GlobalThemeOverrides = {
@@ -42,38 +50,51 @@ export const themeOverrides: GlobalThemeOverrides = {
   ...sharedOverrides,
   common: {
     ...sharedOverrides.common,
-    bodyColor: '#F5F7FB',
+    bodyColor: '#F8F8F8',
     cardColor: '#FFFFFF',
     modalColor: '#FFFFFF',
     popoverColor: '#FFFFFF',
     inputColor: '#FFFFFF',
-    textColorBase: '#1F2937',
-    textColor1: '#1F2937',
-    textColor2: '#475569',
-    textColor3: '#64748B',
-    placeholderColor: '#94A3B8',
-    borderColor: '#E2E8F0',
+    textColorBase: '#171717',
+    textColor1: '#171717',
+    textColor2: '#525252',
+    textColor3: '#737373',
+    placeholderColor: '#A3A3A3',
+    borderColor: '#E5E5E5',
   },
 }
 
 export const darkThemeOverrides: GlobalThemeOverrides = {
   ...sharedOverrides,
+  Button: {
+    ...sharedOverrides.Button,
+    textColorPrimary: '#000000',
+    textColorHoverPrimary: '#000000',
+    textColorPressedPrimary: '#000000',
+    textColorFocusPrimary: '#000000',
+    textColorDisabledPrimary: '#000000',
+  },
+  Checkbox: { checkMarkColor: '#000000' },
   common: {
     ...sharedOverrides.common,
-    bodyColor: '#0F1624',
-    cardColor: '#182235',
-    modalColor: '#182235',
-    popoverColor: '#182235',
-    inputColor: '#141D2E',
-    textColorBase: '#E2E8F0',
-    textColor1: '#E2E8F0',
-    textColor2: '#CBD5E1',
-    textColor3: '#94A3B8',
-    placeholderColor: '#76869E',
-    borderColor: '#334155',
-    dividerColor: '#334155',
-    hoverColor: '#223149',
-    actionColor: '#141D2E',
+    primaryColor: darkThemeColors.primary,
+    primaryColorHover: darkThemeColors.primaryHover,
+    primaryColorPressed: darkThemeColors.primaryPressed,
+    primaryColorSuppl: darkThemeColors.primaryHover,
+    bodyColor: '#101010',
+    cardColor: '#1A1A1A',
+    modalColor: '#1A1A1A',
+    popoverColor: '#1A1A1A',
+    inputColor: '#171717',
+    textColorBase: '#E5E5E5',
+    textColor1: '#E5E5E5',
+    textColor2: '#D4D4D4',
+    textColor3: '#A3A3A3',
+    placeholderColor: '#737373',
+    borderColor: '#333333',
+    dividerColor: '#333333',
+    hoverColor: '#262626',
+    actionColor: '#171717',
   },
 }
 
@@ -92,12 +113,14 @@ export function applyThemeVariables(mode: ThemeMode): void {
   root.classList.toggle('dark', mode === 'dark')
   root.dataset.theme = mode
   root.style.colorScheme = mode
+  const colors = mode === 'dark' ? darkThemeColors : themeColors
   const variables = {
-    '--accent': themeColors.primary,
-    '--accent-hover': themeColors.primaryHover,
-    '--accent-pressed': themeColors.primaryPressed,
-    '--accent-soft': mode === 'dark' ? '#112D4D' : themeColors.primarySoft,
-    '--accent-border': mode === 'dark' ? '#274B73' : themeColors.primaryBorder,
+    '--accent': colors.primary,
+    '--accent-hover': colors.primaryHover,
+    '--accent-pressed': colors.primaryPressed,
+    '--accent-soft': colors.primarySoft,
+    '--accent-border': colors.primaryBorder,
+    '--accent-contrast': mode === 'dark' ? '#000000' : '#FFFFFF',
   }
   for (const [key, value] of Object.entries(variables)) {
     root.style.setProperty(key, value)

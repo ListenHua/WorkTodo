@@ -1,5 +1,5 @@
 export type TaskStatus = 'todo' | 'doing' | 'done' | 'canceled'
-export type Priority = 'none' | 'low' | 'medium' | 'high'
+export type Priority = 'low' | 'medium' | 'high'
 export interface WorkspaceStatus {
   rootPath: string | null
   available: boolean
@@ -41,6 +41,7 @@ export interface Task {
   priority: Priority
   planDate: string | null
   createdAt: string
+  completedAt?: string | null
   description?: string
   dueAt?: string | null
   deletedAt?: string | null
@@ -93,6 +94,7 @@ export interface WorkspaceApi {
   updateTask(id: string, input: UpdateTask): Promise<Task>
   trashTask(id: string, restore: boolean, toInbox?: boolean): Promise<void>
   updateProject(id: string, input: CreateProject): Promise<Project>
+  deleteProject(id: string): Promise<void>
   setProjectPinned(id: string, pinned: boolean): Promise<void>
   setProjectStatus(
     id: string,
@@ -111,7 +113,6 @@ export const projectColors = [
   '#16160e',
 ] as const
 export const priorityLabels: Record<Priority, string> = {
-  none: '无优先级',
   low: '低',
   medium: '中',
   high: '高',

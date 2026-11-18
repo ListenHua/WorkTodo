@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { emit } from '@tauri-apps/api/event'
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
-import { NButton, NInput, NSwitch, NInputNumber, NPopconfirm, NSelect, NTabs, NTab } from 'naive-ui'
+import { invoke } from '@tauri-apps/api/core'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { NButton, NSwitch, NInputNumber, NPopconfirm, NSelect, NTabs, NTab } from 'naive-ui'
 import { useWorkspaceStore } from '../stores/workspace'
 import { useThemeStore } from '../stores/theme'
 import { preferences } from '../services/preferences'
@@ -19,6 +20,8 @@ import IconHint from '../components/IconHint.vue'
 import AboutSettings from '../components/AboutSettings.vue'
 import { useReleaseStore } from '../stores/release'
 import { shortcutFromKey } from '../shared/capture-shortcut'
+import { globalShortcutDefaults, globalShortcutConflict } from '../shared/global-shortcuts'
+import ShortcutRecorder from '../components/ShortcutRecorder.vue'
 const workspace = useWorkspaceStore()
 const release = useReleaseStore()
 const message = useAppMessage()
@@ -75,8 +78,18 @@ async function tabKeydown(event: KeyboardEvent, name: SettingsTab) {
 }
 const busy = ref(false)
 const runtime = ref<DesktopStatus | null>(null)
+const shortcutDefaults = computed(() => globalShortcutDefaults(runtime.value?.isMacos ?? false))
+const shortcutConflict = computed(() =>
+  runtime.value ? globalShortcutConflict(runtime.value.settings, runtime.value.isMacos) : '',
+)
 const appliedCapture = ref({ trigger: 'MouseMiddle', holdMs: 650 })
 const recording = ref(false)
+watch(recording, (active) => {
+  if (workspace.desktop)
+    void invoke('shortcut_recording', { active }).catch((cause) =>
+      message.error(errorMessage(cause)),
+    )
+})
 const usesKeyboard = computed(
   () => !!runtime.value && !isMouseTrigger(runtime.value.settings.captureTrigger),
 )
@@ -188,6 +201,7 @@ const operations = ref<Awaited<ReturnType<typeof desktopApi.pending>>>([])
 async function load(preserveDraft = true) {
   const status = await desktopApi.status()
   status.settings.captureTrigger ||= 'MouseMiddle'
+  status.settings.toggleShortcut ??= globalShortcutDefaults(status.isMacos).toggleShortcut
   appliedCapture.value = {
     trigger: status.settings.captureTrigger,
     holdMs: status.settings.middleHoldMs,
@@ -269,10 +283,17 @@ onMounted(async () => {
     void refreshMiddle()
   }, 1500)
   window.addEventListener('focus', onFocus)
+  window.addEventListener('blur', cancelRecording)
 })
 onUnmounted(() => {
   disposed = true
   if (statusTimer) clearInterval(statusTimer)
+  if (recording.value && workspace.desktop)
+    void invoke('shortcut_recording', { active: false }).catch((cause) =>
+      message.error(errorMessage(cause)),
+    )
+  cancelRecording()
+  window.removeEventListener('blur', cancelRecording)
   window.removeEventListener('focus', onFocus)
 })
 </script>
@@ -425,7 +446,7 @@ onUnmounted(() => {
           />
         </div>
         <div class="setting-row">
-          <label for="capture-trigger">触发方式</label>
+          <span>触发方式</span>
           <NButton
             id="capture-trigger"
             class="capture-trigger-button"
@@ -433,8 +454,6 @@ onUnmounted(() => {
             :type="recording ? 'primary' : 'default'"
             :aria-pressed="recording"
             aria-label="采集触发方式"
-            :aria-describedby="recording ? 'capture-recording-help' : undefined"
-            title="点击录入鼠标按键或键盘快捷键"
             @click="startRecording"
             @pointerdown="recordMouse"
             @keydown="recordShortcut"
@@ -449,9 +468,6 @@ onUnmounted(() => {
             }}
           </NButton>
         </div>
-        <p v-if="recording" id="capture-recording-help" class="setting-help" aria-live="polite">
-          在此处按下鼠标按键，或按下键盘快捷键；Esc 取消。
-        </p>
         <div class="setting-row">
           <label>长按时间（毫秒）</label
           ><NInputNumber
@@ -464,25 +480,6 @@ onUnmounted(() => {
           />
         </div>
         <p class="setting-help" role="status">{{ middleState }}</p>
-        <p class="setting-help">
-          {{
-            usesKeyboard
-              ? '选中文字后，按住快捷键超过设定时间，松开全部按键后采集。'
-              : `选中文字后，长按${captureTriggerLabel(runtime.settings.captureTrigger)}超过设定时间即可采集。`
-          }}
-          开关立即生效；修改按键或时间后请保存。图片需原应用支持复制图像，采集会更新剪贴板。
-        </p>
-        <p
-          v-if="
-            !usesKeyboard &&
-            ['MouseLeft', 'MouseRight', 'MouseBack', 'MouseForward'].includes(
-              runtime.settings.captureTrigger,
-            )
-          "
-          class="setting-help"
-        >
-          保留按键原有行为；右键菜单、选区或浏览器前进后退可能影响采集，可换用其他按键。
-        </p>
         <template v-if="workspace.desktop && runtime.settings.middleCapture">
           <p
             v-if="runtime.isMacos && (!runtime.middlePermission || needsInputMonitoring)"
@@ -538,15 +535,24 @@ onUnmounted(() => {
             @update:value="(value) => run(() => desktopApi.autostart(value))"
           />
         </div>
-        <label for="global-shortcut">快速添加快捷键</label
-        ><NInput
-          v-model:value="runtime.settings.shortcut"
-          :input-props="{ id: 'global-shortcut' }"
-          placeholder="留空可关闭全局快捷键"
+        <ShortcutRecorder
+          id="global-shortcut"
+          v-model="runtime.settings.shortcut"
+          label="快捷添加待办"
+          :default-value="shortcutDefaults.shortcut"
+          :is-macos="runtime.isMacos"
+          :disabled="busy"
         />
-        <p v-if="runtime.shortcutError" class="form-error">{{ runtime.shortcutError }}</p>
-        <p class="setting-help">
-          应用运行或常驻托盘时接收提醒；选择“退出”后停止。过期未发送的提醒会在下次启动或唤醒后检查。
+        <ShortcutRecorder
+          id="toggle-shortcut"
+          v-model="runtime.settings.toggleShortcut"
+          label="显示/隐藏窗口"
+          :default-value="shortcutDefaults.toggleShortcut"
+          :is-macos="runtime.isMacos"
+          :disabled="busy"
+        />
+        <p v-if="runtime.shortcutError" class="form-error" role="alert">
+          {{ runtime.shortcutError }}
         </p>
         <div class="dialog-footer">
           <NButton
@@ -600,6 +606,9 @@ onUnmounted(() => {
       v-if="runtime && (dirty || settingsTab === 'capture' || settingsTab === 'desktop')"
       class="settings-savebar"
     >
+      <p v-if="shortcutConflict" class="shortcut-conflict form-error" role="alert">
+        {{ shortcutConflict }}
+      </p>
       <span :class="{ 'unsaved-label': dirty }" aria-live="polite">{{
         dirty ? '有未保存的设置' : '设置已保存到本地'
       }}</span>
@@ -607,7 +616,7 @@ onUnmounted(() => {
       <NButton
         type="primary"
         :loading="busy"
-        :disabled="!dirty"
+        :disabled="busy || !dirty || !!shortcutConflict"
         @click="run(() => desktopApi.save({ ...runtime!.settings }), '设置已保存')"
         >保存桌面设置</NButton
       >

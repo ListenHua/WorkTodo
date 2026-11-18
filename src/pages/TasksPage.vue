@@ -17,7 +17,7 @@ const filters = reactive<Omit<TaskFilters, 'search'>>({
   project: '',
   priority: '',
   date: 'all',
-  sort: 'created',
+  sort: 'priority',
 })
 watch(
   () => [route.path, route.query.view, route.query.date, route.query.project],
@@ -62,7 +62,7 @@ function reset() {
     project: '',
     priority: '',
     date: 'all',
-    sort: 'created',
+    sort: 'priority',
   })
 }
 </script>
@@ -99,7 +99,7 @@ function reset() {
           { label: '全部优先级', value: '' },
           ...Object.entries(priorityLabels).map(([value, label]) => ({
             value,
-            label: value === 'none' ? label : `${label}优先级`,
+            label: `${label}优先级`,
           })),
         ]"
       >

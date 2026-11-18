@@ -1,3 +1,4 @@
+import { normalizePriority } from '../shared/task-priority'
 import { preferences } from '../services/preferences'
 import { readProjectSort, sortProjects, type ProjectSort } from '../shared/project-sort'
 import { reminders } from '../services/desktop'
@@ -59,7 +60,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       status.value = nextStatus
       projects.value = nextProjects
       projectSort.value = readProjectSort(nextSort)
-      tasks.value = nextTasks
+      tasks.value = nextTasks.map((task) => ({
+        ...task,
+        priority: normalizePriority(task.priority),
+      }))
     } catch (cause) {
       if (version === refreshVersion) error.value = errorMessage(cause)
     } finally {
@@ -135,6 +139,18 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     await refresh()
     if (desktop) void emit('workspace-changed')
   }
+  async function deleteProject(id: string) {
+    if (!desktop) {
+      if (!projects.value.some((project) => project.id === id)) throw new Error('项目不存在')
+      for (const task of tasks.value.filter((task) => task.projectId === id))
+        await attachments.movePreview(task.id, null)
+    }
+    await api.deleteProject(id)
+    if (!desktop && (await preferences.get('capture_project')) === id)
+      await preferences.set('capture_project', '')
+    await refresh()
+    if (desktop) void emit('workspace-changed')
+  }
   async function saveProjectSort(input: ProjectSort) {
     if (sortingProjects.value) throw new Error('正在保存项目顺序，请稍后再试')
     const bindingId = status.value.bindingId
@@ -204,6 +220,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     updateTask,
     trashTask,
     updateProject,
+    deleteProject,
     setProjectStatus,
     setProjectPinned,
   }

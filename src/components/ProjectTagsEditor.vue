@@ -85,7 +85,7 @@ watch([name, color], () => {
         :key="index"
         class="project-tag project-tag-selection-item"
         role="listitem"
-        :style="{ '--tag-color': tag.color, background: `${tag.color}14` }"
+        :style="{ color: tag.color, background: `${tag.color}18` }"
       >
         <IconHint text="编辑标签">
           <button
@@ -95,7 +95,6 @@ watch([name, color], () => {
             :disabled="disabled"
             @click="open(index)"
           >
-            <span class="project-tag-dot" />
             <span class="project-tag-label">{{ tag.name }}</span>
           </button>
         </IconHint>
@@ -152,10 +151,9 @@ watch([name, color], () => {
             :aria-label="`复用标签 ${tag.name}`"
             :aria-pressed="selected(tag)"
             :disabled="disabled || selected(tag) || tags.length >= 20"
-            :style="{ '--tag-color': tag.color, background: `${tag.color}14` }"
+            :style="{ color: tag.color, background: `${tag.color}18` }"
             @click="apply({ ...tag })"
           >
-            <span class="project-tag-dot" />
             <span class="project-tag-label">{{ tag.name }}</span>
             <AppIcon v-if="selected(tag)" name="check" :size="14" />
           </button>

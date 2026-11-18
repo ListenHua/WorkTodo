@@ -2,7 +2,9 @@
 import IconHint from './IconHint.vue'
 import { listen } from '@tauri-apps/api/event'
 import { useAppMessage } from '../composables/useAppMessage'
-import { desktop } from '../services/api'
+import { useTrayActions } from '../composables/useTrayActions'
+import { api, desktop } from '../services/api'
+import { errorMessage } from '../shared/domain'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NButton } from 'naive-ui'
@@ -13,8 +15,12 @@ import AppIcon from './AppIcon.vue'
 import TopbarSearch from './TopbarSearch.vue'
 import AnimatedThemeToggler from './magicui/AnimatedThemeToggler.vue'
 
+const emit = defineEmits<{ toolbarResize: [height: number] }>()
+const toolbarHost = ref<HTMLElement | null>(null)
+let toolbarObserver: ResizeObserver | undefined
 const workspace = useWorkspaceStore()
 const message = useAppMessage()
+useTrayActions()
 const ui = useUiStore()
 const release = useReleaseStore()
 const route = useRoute()
@@ -51,7 +57,25 @@ const selectedProject = computed(() =>
     ? workspace.projects.find((p) => p.id === route.query.project)
     : undefined,
 )
-const flatPage = computed(() => !['/', '/projects'].includes(route.path))
+const flatPage = computed(() => !!selectedProject.value || !['/', '/projects'].includes(route.path))
+const cardPage = computed(() =>
+  selectedProject.value
+    ? !['files', 'links'].includes(String(route.query.view))
+    : ['/', '/projects', '/tasks', '/trash'].includes(route.path),
+)
+const openingProjectFolder = ref(false)
+async function openProjectFolder() {
+  const project = selectedProject.value
+  if (!project || openingProjectFolder.value) return
+  openingProjectFolder.value = true
+  try {
+    await api.openProjectFolder(project.id)
+  } catch (cause) {
+    message.error(errorMessage(cause))
+  } finally {
+    openingProjectFolder.value = false
+  }
+}
 const pinnedProjects = computed(() => workspace.projects.filter((project) => project.pinned))
 const navigation = [
   { path: '/', title: '概览', icon: 'grid' },
@@ -70,7 +94,7 @@ const dateLabel = computed(() =>
 function keyboard(event: KeyboardEvent) {
   if (event.isComposing || !event.altKey || event.key.toLowerCase() !== 'n') return
   event.preventDefault()
-  ui.newTask()
+  ui.newTask(selectedProject.value?.status === 'active' ? selectedProject.value.id : null)
 }
 function wake() {
   if (!document.hidden) void workspace.refresh()
@@ -79,6 +103,12 @@ let clockTimer: ReturnType<typeof setInterval> | undefined
 let closed = false
 const listeners: (() => void)[] = []
 onMounted(async () => {
+  if (toolbarHost.value) {
+    toolbarObserver = new ResizeObserver(() => {
+      emit('toolbarResize', toolbarHost.value?.offsetHeight ?? 0)
+    })
+    toolbarObserver.observe(toolbarHost.value)
+  }
   sidebarMedia = window.matchMedia('(max-width: 760px)')
   updateSidebar()
   sidebarMedia.addEventListener('change', updateSidebar)
@@ -102,6 +132,8 @@ onMounted(async () => {
   }
 })
 onUnmounted(() => {
+  toolbarObserver?.disconnect()
+  emit('toolbarResize', 0)
   sidebarMedia?.removeEventListener('change', updateSidebar)
   closed = true
   if (clockTimer) clearInterval(clockTimer)
@@ -163,7 +195,12 @@ onUnmounted(() => {
     </aside>
     <div
       class="main-column"
-      :class="{ 'flat-layout': flatPage, 'without-topbar-search': !showSearch }"
+      :class="{
+        'flat-layout': flatPage,
+        'card-layout': cardPage,
+        'without-topbar-search': !showSearch,
+        'overview-layout': route.path === '/',
+      }"
     >
       <header class="topbar">
         <div class="topbar-title">
@@ -192,7 +229,7 @@ onUnmounted(() => {
             >
               <AppIcon name="refresh" :size="18" /></button
           ></IconHint>
-          <IconHint text="新建待办" v-if="route.path === '/' || route.path === '/tasks'"
+          <IconHint text="新建待办" v-if="route.path === '/tasks'"
             ><button
               class="icon-button topbar-primary-action"
               aria-label="新建待办"
@@ -200,13 +237,23 @@ onUnmounted(() => {
             >
               <AppIcon name="plus" :size="21" /></button
           ></IconHint>
+          <IconHint text="打开项目文件夹" v-if="selectedProject"
+            ><button
+              class="icon-button"
+              aria-label="打开项目文件夹"
+              :disabled="openingProjectFolder"
+              :aria-busy="openingProjectFolder"
+              @click="openProjectFolder"
+            >
+              <AppIcon name="folder" :size="20" /></button
+          ></IconHint>
           <IconHint text="添加待办" v-if="selectedProject?.status === 'active'"
             ><button
               class="icon-button topbar-primary-action"
               aria-label="添加待办"
               @click="ui.newTask(selectedProject.id)"
             >
-              <AppIcon name="list" :size="20" /></button
+              <AppIcon name="plus" :size="21" /></button
           ></IconHint>
           <IconHint text="编辑项目" v-if="selectedProject"
             ><button
@@ -216,7 +263,7 @@ onUnmounted(() => {
             >
               <AppIcon name="edit" :size="20" /></button
           ></IconHint>
-          <IconHint text="新建项目" v-if="route.path === '/projects'"
+          <IconHint text="新建项目" v-if="route.path === '/projects' && !selectedProject"
             ><button
               class="icon-button topbar-primary-action"
               aria-label="新建项目"
@@ -226,10 +273,19 @@ onUnmounted(() => {
           ></IconHint>
         </div>
       </header>
+      <div id="page-toolbar" ref="toolbarHost" class="page-toolbar" />
       <div v-if="!workspace.desktop" class="preview-banner">
         <AppIcon name="info" :size="15" />浏览器预览：刷新后数据清空，不写入本地文件。
       </div>
-      <main class="page-container" :class="{ 'flat-page': flatPage }" :data-module="route.path">
+      <main
+        class="page-container"
+        :class="{
+          'flat-page': flatPage,
+          'overview-page': route.path === '/',
+          'project-detail-page': !!selectedProject,
+        }"
+        :data-module="route.path"
+      >
         <div v-if="workspace.status.readOnly" class="error-banner" role="alert">
           {{ workspace.status.storageError || '工作目录暂不可写，当前显示只读缓存' }}
           <NButton size="small" @click="workspace.refresh()">重新检查</NButton>

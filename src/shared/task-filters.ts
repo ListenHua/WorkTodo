@@ -1,5 +1,6 @@
 import type { Task, Project, Priority, TaskStatus } from './types'
 import { isPending, isTaskForDay, localDate } from './domain'
+import { compareTaskPriority, normalizePriority } from './task-priority'
 export interface TaskFilters {
   search: string
   status: 'pending' | 'all' | TaskStatus
@@ -22,7 +23,6 @@ export function filterTasks(
   const week = new Date(`${today}T12:00:00`)
   week.setDate(week.getDate() + 6)
   const weekEnd = localDate(week)
-  const rank: Record<Priority, number> = { high: 0, medium: 1, low: 2, none: 3 }
   return tasks
     .filter((task) => {
       if (scope === 'trash') {
@@ -42,7 +42,7 @@ export function filterTasks(
           : filters.project && task.projectId !== filters.project
       )
         return false
-      if (filters.priority && task.priority !== filters.priority) return false
+      if (filters.priority && normalizePriority(task.priority) !== filters.priority) return false
       if (
         filters.date === 'overdue' &&
         !(isPending(task) && task.dueAt && new Date(task.dueAt).getTime() < now)
@@ -64,8 +64,7 @@ export function filterTasks(
             (b.dueAt ? new Date(b.dueAt).getTime() : Infinity) ||
           b.createdAt.localeCompare(a.createdAt)
         )
-      if (filters.sort === 'priority')
-        return rank[a.priority] - rank[b.priority] || b.createdAt.localeCompare(a.createdAt)
+      if (filters.sort === 'priority') return compareTaskPriority(a, b)
       if (filters.sort === 'title') return a.title.localeCompare(b.title, 'zh-CN')
       return b.createdAt.localeCompare(a.createdAt)
     })

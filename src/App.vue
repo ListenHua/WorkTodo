@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { NConfigProvider, NGlobalStyle, NMessageProvider, zhCN, dateZhCN } from 'naive-ui'
@@ -10,6 +10,7 @@ import TaskDialog from './components/TaskDialog.vue'
 import { useWorkspaceStore } from './stores/workspace'
 import { useReleaseStore } from './stores/release'
 const route = useRoute()
+const toolbarHeight = ref(0)
 const quick = computed(() => route.path === '/capture')
 const workspace = useWorkspaceStore()
 const theme = useThemeStore()
@@ -34,10 +35,10 @@ onMounted(() => {
           ? '12px'
           : route.path === '/settings'
             ? 'calc(var(--settings-topbar-height) + 8px)'
-            : 'calc(var(--topbar-height) + 8px)',
+            : `calc(var(--topbar-height) + ${toolbarHeight}px + 8px)`,
       }"
     >
-      <RouterView v-if="quick" /><AppShell v-else
+      <RouterView v-if="quick" /><AppShell v-else @toolbar-resize="toolbarHeight = $event"
         ><RouterView
           :key="route.path === '/settings' ? 'settings' : workspace.status.bindingId || 'unbound'"
       /></AppShell>
