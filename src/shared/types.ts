@@ -83,7 +83,7 @@ export const statusLabels: Record<TaskStatus, string> = {
 }
 export interface WorkspaceApi {
   getStatus(): Promise<WorkspaceStatus>
-  selectRoot(): Promise<WorkspaceStatus>
+  selectRoot(): Promise<WorkspaceStatus | null>
   listProjects(): Promise<Project[]>
   createProject(input: CreateProject): Promise<Project>
   listTasks(): Promise<Task[]>

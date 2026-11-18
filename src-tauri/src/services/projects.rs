@@ -747,9 +747,7 @@ mod deletion_tests {
             db::initialize(&bootstrap).unwrap();
             let root = temp.path().join("workspace");
             fs::create_dir(&root).unwrap();
-            portable::location::select(&bootstrap, &root, |_| true)
-                .unwrap()
-                .unwrap();
+            portable::location::select(&bootstrap, &root).unwrap();
             Self {
                 temp,
                 bootstrap,

@@ -119,6 +119,8 @@ pub fn run() {
             commands::storage_recovery_action,
             commands::workspace_status,
             commands::workspace_select_root,
+            commands::workspace_entries,
+            commands::workspace_open_entry,
             commands::projects_list,
             commands::projects_set_pinned,
             commands::projects_create,

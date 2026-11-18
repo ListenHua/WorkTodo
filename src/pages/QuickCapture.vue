@@ -4,7 +4,7 @@ import AppIcon from '../components/AppIcon.vue'
 import { ref, onMounted, onUnmounted, watch, computed, nextTick } from 'vue'
 import { NButton, NInput, NSelect } from 'naive-ui'
 import { invoke } from '@tauri-apps/api/core'
-import { emitTo, listen } from '@tauri-apps/api/event'
+import { emit, emitTo, listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useWorkspaceStore } from '../stores/workspace'
 import { desktop } from '../services/api'
@@ -254,7 +254,24 @@ onMounted(async () => {
     })
     if (gone) focus()
     else cleanups.push(focus)
-    const changes = await listen('workspace-changed', () => void reloadDraft())
+    const prepareStorage = await listen<string>(
+      'capture-prepare-storage-change',
+      async ({ payload }) => {
+        await nextTick()
+        await flushDraft()
+        await emit('capture-storage-ready', {
+          requestId: payload,
+          saved: !draftError.value.includes('本机暂存也失败'),
+        })
+      },
+    )
+    if (gone) prepareStorage()
+    else cleanups.push(prepareStorage)
+    const changes = await listen('workspace-changed', () => {
+      void reloadDraft().catch((cause) => {
+        error.value = errorMessage(cause)
+      })
+    })
     if (gone) changes()
     else cleanups.push(changes)
     const off = await listen('capture-selection', selected)

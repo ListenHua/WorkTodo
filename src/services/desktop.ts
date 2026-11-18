@@ -119,7 +119,17 @@ export interface StorageInfo {
   recoveryCount: number
   counts?: { projects: number; tasks: number; files: number } | null
 }
+export interface WorkspaceEntry {
+  name: string
+  directory: boolean
+}
 export const desktopApi = {
+  async entries(): Promise<WorkspaceEntry[]> {
+    return desktop ? invoke('workspace_entries') : []
+  },
+  async openEntry(name: string, bindingId: string) {
+    if (desktop) await invoke('workspace_open_entry', { name, bindingId })
+  },
   async storage(): Promise<StorageInfo | null> {
     return desktop ? invoke('storage_info') : null
   },

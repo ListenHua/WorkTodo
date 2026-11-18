@@ -111,7 +111,7 @@ pub fn fingerprint(file: &Path) -> AppResult<String> {
 pub fn lock(root: &Path) -> AppResult<File> {
     let directory = path(root, ".workspace")?;
     if !root.is_dir() {
-        return Err(invalid("工作目录离线，未创建替代目录"));
+        return Err(invalid("当前目录无法访问，请检查或更换存储目录"));
     }
     if !directory.exists() {
         fs::create_dir(&directory)?;

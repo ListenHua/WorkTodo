@@ -50,20 +50,25 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     error.value = ''
     syncClock()
     try {
-      const [nextStatus, nextProjects, nextTasks, nextSort] = await Promise.all([
+      const [nextStatus, nextProjects, nextTasks, nextSort] = await Promise.allSettled([
         api.getStatus(),
         api.listProjects(),
         api.listTasks(),
         preferences.get('project_sort'),
       ])
       if (version !== refreshVersion) return
-      status.value = nextStatus
-      projects.value = nextProjects
-      projectSort.value = readProjectSort(nextSort)
-      tasks.value = nextTasks.map((task) => ({
+      if (nextStatus.status === 'rejected') throw nextStatus.reason
+      status.value = nextStatus.value
+      projects.value = nextProjects.status === 'fulfilled' ? nextProjects.value : []
+      projectSort.value = readProjectSort(nextSort.status === 'fulfilled' ? nextSort.value : null)
+      tasks.value = (nextTasks.status === 'fulfilled' ? nextTasks.value : []).map((task) => ({
         ...task,
         priority: normalizePriority(task.priority),
       }))
+      const failure = [nextProjects, nextTasks, nextSort].find(
+        (result) => result.status === 'rejected',
+      )
+      if (failure?.status === 'rejected') error.value = errorMessage(failure.reason)
     } catch (cause) {
       if (version === refreshVersion) error.value = errorMessage(cause)
     } finally {
@@ -71,7 +76,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
   }
   async function selectRoot() {
-    status.value = await api.selectRoot()
+    const next = await api.selectRoot()
+    if (!next) return false
+    status.value = next
+    return true
   }
   async function createProject(input: CreateProject) {
     await api.createProject(input)

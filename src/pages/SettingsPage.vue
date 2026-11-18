@@ -5,6 +5,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { NButton, NSwitch, NInputNumber, NPopconfirm, NSelect, NTabs, NTab } from 'naive-ui'
 import { useWorkspaceStore } from '../stores/workspace'
 import { useThemeStore } from '../stores/theme'
+import { useRouter } from 'vue-router'
 import { preferences } from '../services/preferences'
 import {
   isMouseTrigger,
@@ -23,6 +24,7 @@ import { shortcutFromKey } from '../shared/capture-shortcut'
 import { globalShortcutDefaults, globalShortcutConflict } from '../shared/global-shortcuts'
 import ShortcutRecorder from '../components/ShortcutRecorder.vue'
 const workspace = useWorkspaceStore()
+const router = useRouter()
 const release = useReleaseStore()
 const message = useAppMessage()
 const theme = useThemeStore()
@@ -241,17 +243,26 @@ async function recovery(action: 'export' | 'restore' | 'diagnostic') {
   })
 }
 async function selectStorage() {
-  await run(async () => {
-    // Flush the capture draft before the backend takes a snapshot of the workspace.
-    await preferences.get('capture_draft')
+  if (busy.value) return
+  busy.value = true
+  let changed = false
+  try {
     const previous = workspace.status.bindingId ?? workspace.status.rootPath
     const hadRoot = !!workspace.status.rootPath
-    await workspace.selectRoot()
-    if ((workspace.status.bindingId ?? workspace.status.rootPath) !== previous) {
-      runtime.value = null
-      message.success(hadRoot ? '存储目录已迁移，原目录已保留' : '存储目录已设置')
-    }
-  })
+    if (!(await workspace.selectRoot())) return
+    await workspace.refresh()
+    changed = (workspace.status.bindingId ?? workspace.status.rootPath) !== previous
+    runtime.value = null
+    await load(false)
+    await refreshStorage()
+    await theme.hydrate()
+    if (changed) message.success(hadRoot ? '已更换存储目录' : '存储目录已设置')
+  } catch (cause) {
+    message.error(errorMessage(cause))
+  } finally {
+    busy.value = false
+  }
+  if (changed) await router.replace('/')
 }
 async function importProject() {
   await run(async () => {
@@ -270,7 +281,7 @@ const storageState = computed(() => {
   )
     return {
       icon: 'folder-warning',
-      text: '目录不可用，请检查位置、权限或配置',
+      text: '当前目录无法访问，请检查或更换存储目录',
       color: 'var(--danger)',
     }
   return { icon: 'brand', text: workspace.desktop ? '目录可用' : '预览目录', color: '#18a058' }
@@ -360,7 +371,7 @@ onUnmounted(() => {
             </IconHint>
             <code>{{ workspace.status.rootPath || '尚未选择存储位置' }}</code>
             <NButton :disabled="busy" :loading="busy" @click="selectStorage">{{
-              workspace.status.rootPath ? '迁移存储目录' : '选择文件夹'
+              workspace.status.rootPath ? '更换存储目录' : '选择存储目录'
             }}</NButton>
           </div>
         </div>

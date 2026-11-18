@@ -29,7 +29,7 @@ export const useThemeStore = defineStore('theme', () => {
   async function hydrate() {
     try {
       const saved = await preferences.get('appearance')
-      if (saved === 'light' || saved === 'dark' || saved === 'system') preference.value = saved
+      preference.value = saved === 'light' || saved === 'dark' ? saved : 'system'
       error.value = ''
     } catch {
       error.value = '无法读取本地外观设置，请重试'

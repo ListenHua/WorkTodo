@@ -171,7 +171,6 @@ export function createPreviewApi(): WorkspaceApi {
       return { ...workspace }
     },
     async selectRoot() {
-      if (projects.length) throw new Error('已有项目时需要目录迁移；框架阶段暂不支持直接切换')
       workspace = { rootPath: '/preview/projects', available: true, pendingOperations: 0 }
       return { ...workspace }
     },

@@ -79,12 +79,16 @@ pub(super) fn copy_contents(source: &Path, target: &Path) -> AppResult<()> {
 }
 
 pub fn upgrade(bootstrap: &Path, target: &Path) -> AppResult<PathBuf> {
-    super::location::select(bootstrap, target, |_| false)?
-        .map(|_| target.to_path_buf())
-        .ok_or_else(|| AppError::new("REPLACEMENT_CANCELLED", "已取消目录替换，当前数据未更改"))
+    let target = empty(
+        target,
+        services::workspace::root(&db::connect(bootstrap)?)?.as_deref(),
+    )?;
+    prepare(bootstrap, &target)?;
+    super::open(bootstrap, &target)?;
+    Ok(target)
 }
 
-// The caller holds the current workspace lock until installation and binding finish.
+// Legacy backup conversion is separate from opening or changing the active folder.
 pub(super) fn prepare(bootstrap: &Path, stage: &Path) -> AppResult<()> {
     if let Some(binding) = super::binding(bootstrap)? {
         let docs = super::load_binding(&binding)?;

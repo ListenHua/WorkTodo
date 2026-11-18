@@ -28,10 +28,7 @@ fn check(v: &Value, kind: &str, workspace: Option<&str>) -> AppResult<()> {
             "目录数据格式不受支持，请使用兼容版本；未修改原数据",
         ));
     }
-    if v["kind"] != kind
-        || workspace.is_some_and(|id| v["workspaceId"] != id)
-        || !v["revision"].is_u64()
-    {
+    if v["kind"] != kind || workspace.is_some_and(|id| v["workspaceId"] != id) {
         return Err(io::invalid("配置身份、类型或版本无效"));
     }
     Ok(())
@@ -69,24 +66,9 @@ pub fn load(root: &Path) -> AppResult<Documents> {
         expected.insert(name.into());
     }
     let mut documents = Documents::new();
-    for entry in items(&config["snapshot"], "documents")? {
-        let name = text(entry, "path")?;
-        if !expected.remove(name) {
-            return Err(io::invalid("提交清单包含重复或非业务文档"));
-        }
-        let path = io::path(root, name)?;
-        if std::fs::metadata(&path).is_ok_and(|m| m.len() > 64 * 1024 * 1024) {
-            return Err(io::invalid("目录文档过大"));
-        }
-        let bytes = std::fs::read(&path)
-            .map_err(|_| io::invalid("目录文档缺失，请等待复制完成或从备份恢复"))?;
-        if bytes.len() > 64 * 1024 * 1024 || io::digest(&bytes) != text(entry, "sha256")? {
-            return Err(crate::error::AppError::new(
-                "WORKSPACE_CONFLICT",
-                "文档校验不一致，可能正在同步或被外部修改；原件未覆盖",
-            ));
-        }
-        let v = io::read(&path)?;
+    for name in expected {
+        let path = io::path(root, &name)?;
+        let v = io::read(&path).map_err(|error| error.with_details(json!({"path": path})))?;
         let kind = if name.ends_with("/draft.json") {
             "draft"
         } else if name.ends_with("config.json") {
@@ -95,13 +77,7 @@ pub fn load(root: &Path) -> AppResult<Documents> {
             "todos"
         };
         check(&v, kind, Some(id))?;
-        if v["revision"] != entry["revision"] {
-            return Err(io::invalid("提交版本不一致"));
-        }
-        documents.insert(name.into(), v);
-    }
-    if !expected.is_empty() {
-        return Err(io::invalid("提交清单不完整"));
+        documents.insert(name, v);
     }
     for p in items(&config, "projects")? {
         let dir = text(p, "directory")?;
@@ -130,6 +106,12 @@ pub fn load(root: &Path) -> AppResult<Documents> {
     documents.insert("config.json".into(), config);
     Ok(documents)
 }
+/// Cache freshness follows current JSON content, including edits made outside the app.
+pub fn cache_key(documents: &Documents) -> AppResult<String> {
+    let bytes = serde_json::to_vec(documents).map_err(|_| io::invalid("目录数据无法读取"))?;
+    Ok(io::digest(&bytes))
+}
+
 fn rows(db: &Connection, sql: &str, arg: Option<&str>) -> AppResult<Vec<Value>> {
     let mut stmt = db.prepare(sql)?;
     let names = stmt

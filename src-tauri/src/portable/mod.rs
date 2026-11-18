@@ -27,7 +27,6 @@ pub struct Binding {
     pub id: String,
     pub workspace_id: String,
     pub root: PathBuf,
-    pub fingerprint: String,
 }
 #[derive(Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -82,14 +81,14 @@ pub fn connect_cache(bootstrap: &Path, binding: &Binding) -> AppResult<Connectio
     db::connect(&file)
 }
 pub fn validate_binding(binding: &Binding) -> AppResult<()> {
-    if binding.root.canonicalize().ok().as_ref() != Some(&binding.root)
-        || io::fingerprint(&binding.root).ok().as_ref() != Some(&binding.fingerprint)
-    {
-        return Err(AppError::new(
-            "STORAGE_UNAVAILABLE",
-            "工作目录离线或身份变化，请重新选择；未创建替代目录",
-        ));
-    }
+    fs::read_dir(&binding.root).map_err(|error| {
+        let message = if error.kind() == std::io::ErrorKind::PermissionDenied {
+            "无法访问当前目录，请授予访问权限或更换存储目录"
+        } else {
+            "当前目录无法访问，请检查或更换存储目录"
+        };
+        AppError::new("STORAGE_UNAVAILABLE", message)
+    })?;
     Ok(())
 }
 pub fn open(bootstrap: &Path, root: &Path) -> AppResult<crate::models::WorkspaceStatus> {
@@ -139,17 +138,13 @@ pub(super) fn open_locked(
             .map(|b| b.id)
             .unwrap_or_else(|| Uuid::new_v4().to_string()),
         workspace_id: documents::text(&docs["config.json"], "workspaceId")?.into(),
-        fingerprint: io::fingerprint(&root)?,
         root,
     };
     let mut cache = connect_cache(bootstrap, &binding)?;
     documents::hydrate(&mut cache, &binding.root, &docs)?;
     cache.execute(
         "INSERT OR REPLACE INTO settings(key,value) VALUES('_portable_commit',?1)",
-        [documents::text(
-            &docs["config.json"]["snapshot"],
-            "commitId",
-        )?],
+        [documents::cache_key(&docs)?],
     )?;
     cache.execute(
         "INSERT OR REPLACE INTO settings(key,value) VALUES('_binding_id',?1)",
@@ -166,10 +161,13 @@ pub(super) fn open_locked(
     Ok(status)
 }
 pub fn initialize(root: &Path, db: &Connection) -> AppResult<()> {
+    let _lock = io::lock(root)?;
+    initialize_locked(root, db)
+}
+pub(super) fn initialize_locked(root: &Path, db: &Connection) -> AppResult<()> {
     fs::create_dir_all(root.join("Files"))?;
     fs::create_dir_all(root.join("_回收站"))?;
     let docs = documents::export(db, root, &Documents::new())?;
-    let _lock = io::lock(root)?;
     journal::begin(root, Documents::new())?;
     let _scope = journal::scope();
     journal::commit(docs)
@@ -216,7 +214,7 @@ pub fn execute<T>(
         }
     };
     let mut cache = connect_cache(bootstrap, &binding)?;
-    let commit = documents::text(&before["config.json"]["snapshot"], "commitId")?;
+    let commit = documents::cache_key(&before)?;
     let cached: String = cache
         .query_row(
             "SELECT value FROM settings WHERE key='_portable_commit'",
@@ -228,7 +226,7 @@ pub fn execute<T>(
         documents::hydrate(&mut cache, &binding.root, &before)?;
         cache.execute(
             "INSERT OR REPLACE INTO settings(key,value) VALUES('_portable_commit',?1)",
-            [commit],
+            [&commit],
         )?;
     }
     cache.execute(
@@ -255,10 +253,7 @@ pub fn execute<T>(
                         journal::detach();
                         return Err(error);
                     }
-                    let commit = after["config.json"]["snapshot"]["commitId"]
-                        .as_str()
-                        .unwrap()
-                        .to_owned();
+                    let commit = documents::cache_key(&after)?;
                     if after == before {
                         journal::abort(&binding.root)?;
                         cache.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('_portable_commit',?1)", [commit])?;
@@ -288,6 +283,26 @@ pub fn execute<T>(
         }
     }
 }
+/// Directory selection stays available even when an offline folder has no local cache.
+pub fn workspace_status(bootstrap: &Path) -> AppResult<crate::models::WorkspaceStatus> {
+    match execute(bootstrap, false, |db| services::workspace::status(db)) {
+        Ok(status) => Ok(status),
+        Err(error) => {
+            let Some(binding) = binding(bootstrap)? else {
+                return Err(error);
+            };
+            Ok(crate::models::WorkspaceStatus {
+                root_path: Some(binding.root.to_string_lossy().into_owned()),
+                available: binding.root.is_dir(),
+                pending_operations: 0,
+                read_only: true,
+                storage_error: Some(error.message),
+                binding_id: Some(binding.id),
+            })
+        }
+    }
+}
+
 pub fn strict_offline(bootstrap: &Path) -> AppResult<bool> {
     execute(bootstrap, false, |db| {
         Ok(services::preferences::get(db, "strict_offline")?.as_deref() == Some("true"))
@@ -323,7 +338,7 @@ pub fn capture_image(bootstrap: &Path, source: &Path) -> AppResult<PathBuf> {
     staged
         .persist(&target)
         .map_err(|e| AppError::from(e.error))?;
-    let mut draft=docs.get(&document).cloned().unwrap_or(json!({"formatVersion":1,"kind":"draft","workspaceId":binding.workspace_id,"id":id,"revision":0,"text":"","targetProjectId":null}));
+    let mut draft=docs.get(&document).cloned().unwrap_or(json!({"formatVersion":1,"kind":"draft","workspaceId":docs["config.json"]["workspaceId"],"id":id,"revision":0,"text":"","targetProjectId":null}));
     draft["revision"] = json!(draft["revision"].as_u64().unwrap_or(0) + 1);
     draft["updatedAt"] = json!(chrono::Utc::now().to_rfc3339());
     draft["attachments"] = json!([{"relativePath":format!("Files/{}",target.file_name().unwrap().to_string_lossy()),"mime":"image/png","sha256":io::hash(&target)?}]);
@@ -597,10 +612,7 @@ pub fn clear_cache(bootstrap: &Path) -> AppResult<()> {
     documents::hydrate(&mut cache, &binding.root, &docs)?;
     cache.execute(
         "INSERT OR REPLACE INTO settings(key,value) VALUES('_portable_commit',?1)",
-        [documents::text(
-            &docs["config.json"]["snapshot"],
-            "commitId",
-        )?],
+        [documents::cache_key(&docs)?],
     )?;
     cache.execute(
         "INSERT OR REPLACE INTO settings(key,value) VALUES('_binding_id',?1)",
@@ -716,16 +728,9 @@ pub fn require_binding(bootstrap: &Path, expected: Option<&str>) -> AppResult<()
     Ok(())
 }
 
-/// A copied/replaced root must be selected explicitly even when its path stayed the same.
+/// The selected path is authoritative; copied folders do not need device identity approval.
 pub fn load_binding(binding: &Binding) -> AppResult<Documents> {
-    let docs = documents::load(&binding.root)?;
-    if docs["config.json"]["workspaceId"] != binding.workspace_id {
-        return Err(AppError::new(
-            "STORAGE_UNAVAILABLE",
-            "目录内容身份变化，请重新选择工作目录",
-        ));
-    }
-    Ok(docs)
+    documents::load(&binding.root)
 }
 
 pub fn notification_confirmed(bootstrap: &Path, id: &str) -> AppResult<bool> {

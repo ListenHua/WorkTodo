@@ -13,6 +13,7 @@ import AppIcon from '../components/AppIcon.vue'
 import EmptyState from '../components/EmptyState.vue'
 import TaskList from '../components/TaskList.vue'
 import ProjectFiles from '../components/ProjectFiles.vue'
+import WorkspaceFiles from '../components/WorkspaceFiles.vue'
 import ProjectLinks from '../components/ProjectLinks.vue'
 import ProjectLinkIcons from '../components/ProjectLinkIcons.vue'
 import ProjectMasonry from '../components/ProjectMasonry.vue'
@@ -415,6 +416,7 @@ const projectTasks = computed(() =>
         ><NButton v-else type="primary" @click="ui.newProject()">创建项目</NButton></EmptyState
       >
     </section>
+    <WorkspaceFiles v-if="!sorting" />
     <NDropdown
       :key="contextVersion"
       trigger="manual"

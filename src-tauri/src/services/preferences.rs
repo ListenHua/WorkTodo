@@ -148,7 +148,7 @@ mod tests {
         db::initialize(&bootstrap).unwrap();
         let root = temp.path().join("workspace");
         std::fs::create_dir(&root).unwrap();
-        portable::location::select(&bootstrap, &root, |_| true).unwrap();
+        portable::location::select(&bootstrap, &root).unwrap();
         let project = portable::execute(&bootstrap, true, |db| {
             crate::services::projects::create(
                 db,

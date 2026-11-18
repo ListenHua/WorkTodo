@@ -36,7 +36,8 @@ watch(
     ui.editingTask = null
     ui.defaultProjectId = null
     ui.search = ''
-    if (route.path === '/projects' && route.query.project) void router.replace('/projects')
+    workspace.sortingProjects = false
+    if (route.path !== '/settings') void router.replace('/')
   },
 )
 

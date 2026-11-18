@@ -13,8 +13,8 @@ use std::{
     },
 };
 use tauri::ipc::{Channel, Response};
-use tauri::{AppHandle, Manager, State};
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+use tauri::{AppHandle, Emitter, Listener, Manager, State};
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
 pub static IO_LOCK: Mutex<()> = Mutex::new(());
@@ -63,38 +63,59 @@ where
 
 #[tauri::command]
 pub async fn workspace_status(state: State<'_, AppState>) -> AppResult<WorkspaceStatus> {
-    blocking_read(state.db_path.clone(), |db| services::workspace::status(db)).await
+    let path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = IO_LOCK
+            .lock()
+            .map_err(|_| AppError::new("WORKER_ERROR", "目录状态暂不可用"))?;
+        crate::portable::workspace_status(&path)
+    })
+    .await
+    .map_err(|_| AppError::new("WORKER_ERROR", "目录状态读取中断"))?
 }
 
-fn confirm_storage_replacement(app: &AppHandle, names: &[String]) -> bool {
-    let mut list = names
-        .iter()
-        .take(20)
-        .map(|name| format!("• {name}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    if names.len() > 20 {
-        list.push_str(&format!("\n另有 {} 项", names.len() - 20));
+async fn flush_capture_before_selection(app: &AppHandle) -> AppResult<()> {
+    if app.get_webview_window("quick").is_none() {
+        return Ok(());
     }
-    app.dialog()
-        .message(format!("所选文件夹中存在同名内容：\n\n{list}\n\n是否替换？同名文件夹将整体替换，其中原有内容会被覆盖；其他内容保留。取消后当前存储位置与数据不变。"))
-        .title("替换同名内容")
-        .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::OkCancelCustom("替换".into(), "取消".into()))
-        .blocking_show()
+    let request = uuid::Uuid::new_v4().to_string();
+    let expected = request.clone();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let listener = app.listen("capture-storage-ready", move |event| {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(event.payload()) {
+            if value["requestId"] == expected {
+                let _ = sender.send(value["saved"] == true);
+            }
+        }
+    });
+    let _ = app.emit_to("quick", "capture-prepare-storage-change", request);
+    let ready = tauri::async_runtime::spawn_blocking(move || {
+        receiver.recv_timeout(std::time::Duration::from_secs(2))
+    })
+    .await;
+    app.unlisten(listener);
+    if matches!(ready, Ok(Ok(false))) {
+        return Err(AppError::new(
+            "DRAFT_SAVE_FAILED",
+            "草稿保存及本机暂存失败，请保留采集窗口中的内容后重试",
+        ));
+    }
+    // A hidden/unmounted capture window has no draft to flush. Late writes are binding-guarded
+    // and fall back to device recovery instead of entering the newly selected folder.
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn workspace_select_root(
     app: AppHandle,
     state: State<'_, AppState>,
-) -> AppResult<WorkspaceStatus> {
+) -> AppResult<Option<WorkspaceStatus>> {
     let dialog_app = app.clone();
     let selection = tauri::async_runtime::spawn_blocking(move || {
         dialog_app
             .dialog()
             .file()
-            .set_title("选择项目文件存储位置")
+            .set_title("选择存储目录")
             .blocking_pick_folder()
     })
     .await
@@ -105,6 +126,9 @@ pub async fn workspace_select_root(
                 .map_err(|_| AppError::new("INVALID_DIRECTORY", "无法读取选择的本地目录"))
         })
         .transpose()?;
+    if selected.is_some() {
+        flush_capture_before_selection(&app).await?;
+    }
     let bootstrap = state.db_path.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let _guard = IO_LOCK
@@ -112,25 +136,46 @@ pub async fn workspace_select_root(
             .map_err(|_| AppError::new("WORKER_ERROR", "目录操作暂不可用"))?;
         match selected {
             Some(path) => {
-                match crate::portable::location::select(&bootstrap, &path, |names| {
-                    confirm_storage_replacement(&app, names)
-                })? {
-                    Some(result) => {
-                        crate::desktop::reload_runtime(&app);
-                        Ok(result)
-                    }
-                    None => crate::portable::execute(&bootstrap, false, |db| {
-                        services::workspace::status(db)
-                    }),
-                }
+                let result = crate::portable::location::select(&bootstrap, &path)?;
+                crate::desktop::reload_runtime(&app);
+                let _ = app.emit("workspace-changed", ());
+                let _ = app.emit("reminders-changed", ());
+                let _ = app.emit("preference-changed", "appearance");
+                Ok(Some(result))
             }
-            None => {
-                crate::portable::execute(&bootstrap, false, |db| services::workspace::status(db))
-            }
+            None => Ok(None),
         }
     })
     .await
     .map_err(|_| AppError::new("WORKER_ERROR", "目录操作中断"))?
+}
+
+#[tauri::command]
+pub async fn workspace_entries(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::portable::location::Entry>> {
+    blocking_read(state.db_path.clone(), |db| {
+        crate::portable::location::entries(db)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn workspace_open_entry(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    name: String,
+    binding_id: String,
+) -> AppResult<()> {
+    let bootstrap = state.db_path.clone();
+    let path = blocking_read(state.db_path.clone(), move |db| {
+        crate::portable::require_binding(&bootstrap, Some(&binding_id))?;
+        crate::portable::location::entry_path(db, &name)
+    })
+    .await?;
+    app.opener()
+        .open_path(path.to_string_lossy(), None::<&str>)
+        .map_err(|_| AppError::new("OPEN_FAILED", "无法打开文件或文件夹，请检查默认打开方式"))
 }
 
 #[tauri::command]
@@ -525,22 +570,10 @@ pub async fn data_action(
             .map_err(|_| AppError::new("WORKER_ERROR", "数据操作暂不可用"))?;
         let path = match action.as_str() {
             "backup" => crate::portable::transfer::backup(&bootstrap, &selected)?,
-            "migrate" => {
-                if crate::portable::location::select(&bootstrap, &selected, |names| {
-                    confirm_storage_replacement(&app, names)
-                })?
-                .is_none()
-                {
-                    return Ok(None);
-                }
-                selected
-            }
             "import" => crate::portable::transfer::import_project(&bootstrap, &selected)?,
             _ => return Err(AppError::new("INVALID_ACTION", "无效的数据操作")),
         };
-        if action == "migrate" {
-            crate::desktop::reload_runtime(&app);
-        }
+
         Ok(Some(path.to_string_lossy().into_owned()))
     })
     .await

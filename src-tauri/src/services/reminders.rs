@@ -286,9 +286,7 @@ mod capture_settings_tests {
         crate::db::initialize(&bootstrap).unwrap();
         let root = directory.path().join("workspace");
         std::fs::create_dir(&root).unwrap();
-        crate::portable::location::select(&bootstrap, &root, |_| true)
-            .unwrap()
-            .unwrap();
+        crate::portable::location::select(&bootstrap, &root).unwrap();
         let saved = DesktopSettings {
             shortcut: "Control+Alt+Shift+KeyK".into(),
             toggle_shortcut: "Control+Alt+Shift+KeyL".into(),

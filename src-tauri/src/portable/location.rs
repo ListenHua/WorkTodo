@@ -1,310 +1,139 @@
-//! Folder selection and relocation share one staged, reversible installation path.
-use super::{documents, io, journal, transfer};
+//! Selecting a folder opens its own data; it never copies the previous workspace.
+use super::io;
 use crate::{
+    db,
     error::{AppError, AppResult},
     models::WorkspaceStatus,
-    services,
 };
-use std::{
-    collections::BTreeMap,
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::Path};
 
-fn exists(path: &Path) -> AppResult<bool> {
-    match fs::symlink_metadata(path) {
-        Ok(_) => Ok(true),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error.into()),
-    }
+fn conflict(path: &Path) -> AppError {
+    AppError::new(
+        "STORAGE_FILE_CONFLICT",
+        &format!(
+            "{} 已存在且不是可用的 WorkTodo 数据，请更换目录或处理该文件；原文件未修改",
+            path.display()
+        ),
+    )
 }
 
-// Include empty directories and identities so an external replacement is detectable.
-fn stamp(path: &Path) -> AppResult<BTreeMap<PathBuf, String>> {
-    fn visit(
-        path: &Path,
-        relative: &Path,
-        out: &mut BTreeMap<PathBuf, String>,
-        depth: usize,
-    ) -> AppResult<()> {
-        if depth > 64 || out.len() > 100_000 {
-            return Err(io::invalid("目录数量或层级超限"));
-        }
-        let meta = fs::symlink_metadata(path)?;
-        if services::files::is_link(&meta) {
-            return Err(io::invalid("待替换内容包含链接，请先移除链接"));
-        }
-        let value = if meta.is_dir() {
-            format!("directory:{}", io::fingerprint(path)?)
-        } else if meta.is_file() {
-            format!("file:{}:{}", io::fingerprint(path)?, io::hash(path)?)
-        } else {
-            return Err(io::invalid("包含非常规文件"));
-        };
-        out.insert(relative.to_path_buf(), value);
-        if meta.is_dir() {
-            for entry in fs::read_dir(path)? {
-                let entry = entry?;
-                visit(
-                    &entry.path(),
-                    &relative.join(entry.file_name()),
-                    out,
-                    depth + 1,
-                )?;
-            }
-        }
-        Ok(())
+pub fn select(bootstrap: &Path, target: &Path) -> AppResult<WorkspaceStatus> {
+    let target = target.canonicalize()?;
+    if !target.is_dir() {
+        return Err(io::invalid("请选择文件夹作为存储目录"));
     }
-    let mut out = BTreeMap::new();
-    if exists(path)? {
-        visit(path, Path::new(""), &mut out, 0)?;
+    fs::read_dir(&target)?;
+    let config = io::path(&target, "config.json")?;
+    if config.try_exists()? {
+        let value = io::read(&config)
+            .map_err(|error| error.with_details(serde_json::json!({"path": config})))?;
+        if value["kind"] != "workspace" {
+            return Err(conflict(&config));
+        }
+        return super::open(bootstrap, &target);
     }
+    // Only initialize absent metadata. Ordinary files and folders stay in place.
+    for name in ["todo.json", ".workspace/transactions/current.json"] {
+        let path = io::path(&target, name)?;
+        if path.try_exists()? {
+            return Err(conflict(&path));
+        }
+    }
+    for name in ["Files", "_回收站", ".workspace"] {
+        let path = io::path(&target, name)?;
+        if path.try_exists()? && !path.is_dir() {
+            return Err(conflict(&path));
+        }
+    }
+    let _lock = io::lock(&target)?;
+    // Another app may have initialized the folder while this process waited for the lock.
+    if config.try_exists()? {
+        return super::open_locked(bootstrap, &target);
+    }
+    for name in ["todo.json", ".workspace/transactions/current.json"] {
+        let path = io::path(&target, name)?;
+        if path.try_exists()? {
+            return Err(conflict(&path));
+        }
+    }
+    // A new folder starts empty, even if the previous folder or legacy database has data.
+    let temporary = tempfile::tempdir()?;
+    let database = temporary.path().join("empty.db");
+    db::initialize(&database)?;
+    super::initialize_locked(&target, &db::connect(&database)?)?;
+    super::open_locked(bootstrap, &target)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Entry {
+    pub name: String,
+    pub directory: bool,
+}
+
+/// Show ordinary root entries in place; metadata and registered projects have their own views.
+pub fn entries(db: &rusqlite::Connection) -> AppResult<Vec<Entry>> {
+    let Some(root) = crate::services::workspace::root(db)? else {
+        return Ok(vec![]);
+    };
+    let mut statement =
+        db.prepare("SELECT directory_relpath FROM projects WHERE id!='__inbox__'")?;
+    let projects = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<std::collections::HashSet<_>, _>>()?;
+    let mut out = Vec::new();
+    for entry in fs::read_dir(&root)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if matches!(
+            name.as_str(),
+            "config.json"
+                | "todo.json"
+                | ".workspace"
+                | "_回收站"
+                | ".DS_Store"
+                | "Thumbs.db"
+                | "desktop.ini"
+        ) || projects.contains(&name)
+        {
+            continue;
+        }
+        let meta = fs::symlink_metadata(entry.path())?;
+        if crate::services::files::is_link(&meta) || (!meta.is_file() && !meta.is_dir()) {
+            continue;
+        }
+        if name == "Files" && meta.is_dir() && fs::read_dir(entry.path())?.next().is_none() {
+            continue;
+        }
+        out.push(Entry {
+            name,
+            directory: meta.is_dir(),
+        });
+    }
+    out.sort_by(|a, b| {
+        b.directory
+            .cmp(&a.directory)
+            .then_with(|| a.name.cmp(&b.name))
+    });
     Ok(out)
 }
 
-fn remove(path: &Path) -> AppResult<()> {
-    if fs::symlink_metadata(path)?.is_dir() {
-        fs::remove_dir_all(path)?;
-    } else {
-        fs::remove_file(path)?;
+pub fn entry_path(db: &rusqlite::Connection, name: &str) -> AppResult<std::path::PathBuf> {
+    if !entries(db)?.iter().any(|entry| entry.name == name) {
+        return Err(io::invalid("文件已不存在，请刷新目录"));
     }
-    Ok(())
-}
-
-struct Installed {
-    name: PathBuf,
-    saved: bool,
-    installed: bool,
-}
-fn install(
-    stage: &Path,
-    target: &Path,
-    saved: &Path,
-    name: &Path,
-    steps: &mut Vec<Installed>,
-) -> AppResult<()> {
-    steps.push(Installed {
-        name: name.to_owned(),
-        saved: false,
-        installed: false,
-    });
-    if exists(&target.join(name))? {
-        fs::rename(target.join(name), saved.join((steps.len() - 1).to_string()))?;
-        steps.last_mut().unwrap().saved = true;
-    }
-    fs::rename(stage.join(name), target.join(name))?;
-    steps.last_mut().unwrap().installed = true;
-    Ok(())
-}
-
-/// None means the user declined replacement. Neither binding nor data are changed.
-pub fn select(
-    bootstrap: &Path,
-    target: &Path,
-    confirm: impl FnOnce(&[String]) -> bool,
-) -> AppResult<Option<WorkspaceStatus>> {
-    let target = target.canonicalize()?;
-    if !target.is_dir() {
-        return Err(io::invalid("请选择文件夹作为存储位置"));
-    }
-    let target_identity = io::fingerprint(&target)?;
-    let binding = super::binding(bootstrap)?;
-    let legacy_source = if binding.is_none() {
-        services::workspace::root(&crate::db::connect(bootstrap)?)?
-    } else {
-        None
-    };
-    let source = binding
-        .as_ref()
-        .map(|b| b.root.as_path())
-        .or(legacy_source.as_deref());
-    if source == Some(target.as_path()) && binding.is_some() {
-        return super::open(bootstrap, &target).map(Some);
-    }
-    if source.is_some_and(|source| target.starts_with(source) || source.starts_with(&target)) {
-        return Err(AppError::new(
-            "INVALID_DESTINATION",
-            "新存储目录不能与当前目录互相包含",
-        ));
-    }
-    let source_lock = if let Some(binding) = &binding {
-        super::validate_binding(binding)?;
-        let lock = io::lock(&binding.root)?;
-        journal::recover(&binding.root)?;
-        Some(lock)
-    } else {
-        None
-    };
-    let source_before = source.map(transfer::inventory).transpose()?;
-    let stage = tempfile::Builder::new()
-        .prefix(".workspace-migrate-")
-        .tempdir_in(
-            target
-                .parent()
-                .ok_or_else(|| io::invalid("不能使用磁盘根目录作为存储位置"))?,
-        )?;
-    transfer::prepare(bootstrap, stage.path())?;
-    let docs = documents::load(stage.path())?;
-    transfer::verify_resources(stage.path(), &docs)?;
-    let staged_inventory = transfer::inventory(stage.path())?;
-    let staged_lock = stage.path().join(".workspace/write.lock");
-    if staged_lock.exists() {
-        fs::remove_file(staged_lock)?;
-    }
-
-    let workspace = target.join(".workspace");
-    let whole_workspace = exists(&workspace)? && !fs::symlink_metadata(&workspace)?.is_dir();
-    let had_workspace = exists(&workspace)?;
-    let had_lock = exists(&workspace.join("write.lock")).unwrap_or(false);
-    // A workspace directory keeps its lock inode; replace its children individually.
-    let mut names = Vec::new();
-    for entry in fs::read_dir(stage.path())? {
-        let entry = entry?;
-        if entry.file_name() == ".workspace" && !whole_workspace {
-            for child in fs::read_dir(entry.path())? {
-                names.push(PathBuf::from(".workspace").join(child?.file_name()));
-            }
-        } else {
-            names.push(PathBuf::from(entry.file_name()));
-        }
-    }
-    names.sort();
-    if whole_workspace {
-        names.retain(|name| name != Path::new(".workspace"));
-        names.insert(0, ".workspace".into());
-    }
-    let before = names
-        .iter()
-        .map(|name| stamp(&target.join(name)))
-        .collect::<AppResult<Vec<_>>>()?;
-    let conflicts = names
-        .iter()
-        .zip(&before)
-        .filter(|(_, state)| !state.is_empty())
-        .map(|(name, _)| name.to_string_lossy().replace('\\', "/"))
-        .collect::<Vec<_>>();
-    if !conflicts.is_empty() && !confirm(&conflicts) {
-        return Ok(None);
-    }
-    if source.map(transfer::inventory).transpose()? != source_before {
-        return Err(AppError::new(
-            "SOURCE_CHANGED",
-            "整理期间原目录发生变化，请重试；当前目录未切换",
-        ));
-    }
-    let saved = tempfile::Builder::new()
-        .prefix(".workspace-replaced-")
-        .tempdir_in(target.parent().unwrap())?;
-    // If the process is interrupted, the original entries remain in this sibling folder.
-    io::write(
-        &saved.path().join("restore.json"),
-        &serde_json::json!({"target": target, "entries": names}),
-    )?;
-    let mut steps = Vec::new();
-    let mut target_lock = None;
-    let result = (|| {
-        if io::fingerprint(&target)? != target_identity || target.canonicalize()? != target {
-            return Err(AppError::new(
-                "DESTINATION_CHANGED",
-                "目标目录已被替换，请重新选择",
-            ));
-        }
-        for (name, state) in names.iter().zip(&before) {
-            if stamp(&target.join(name))? != *state {
-                return Err(AppError::new(
-                    "DESTINATION_CHANGED",
-                    "确认期间目标内容发生变化，请重新选择；当前目录未切换",
-                ));
-            }
-        }
-        if whole_workspace {
-            install(stage.path(), &target, saved.path(), &names[0], &mut steps)?;
-        }
-        target_lock = Some(io::lock(&target)?);
-        // Validate again after acquiring the target lock, before touching any user entry.
-        for (name, state) in names.iter().zip(&before).skip(usize::from(whole_workspace)) {
-            if stamp(&target.join(name))? != *state {
-                return Err(AppError::new(
-                    "DESTINATION_CHANGED",
-                    "目标内容发生变化，请重试；当前目录未切换",
-                ));
-            }
-        }
-        for name in names.iter().skip(usize::from(whole_workspace)) {
-            install(stage.path(), &target, saved.path(), name, &mut steps)?;
-        }
-        for (name, hash) in &staged_inventory {
-            if io::hash(&io::path(&target, name)?)? != *hash {
-                return Err(io::invalid("迁移文件校验失败，当前目录未切换"));
-            }
-        }
-        let docs = documents::load(&target)?;
-        transfer::verify_resources(&target, &docs)?;
-        if source.map(transfer::inventory).transpose()? != source_before {
-            return Err(AppError::new(
-                "SOURCE_CHANGED",
-                "迁移期间原目录发生变化，请重试；当前目录未切换",
-            ));
-        }
-        if let Some(binding) = &binding {
-            super::validate_binding(binding)?;
-        }
-        if io::fingerprint(&target)? != target_identity {
-            return Err(io::invalid("迁移期间目标目录身份发生变化"));
-        }
-        super::open_locked(bootstrap, &target)
-    })();
-    if result.is_err() {
-        let held_lock = target_lock.is_some();
-        // Keep the target lock throughout rollback unless the lock directory itself is replaced.
-        if whole_workspace {
-            drop(target_lock.take());
-        }
-        let rollback = (|| -> AppResult<()> {
-            for (index, step) in steps.iter().enumerate().rev() {
-                if step.installed {
-                    remove(&target.join(&step.name))?;
-                }
-                if step.saved {
-                    fs::rename(
-                        saved.path().join(index.to_string()),
-                        target.join(&step.name),
-                    )?;
-                }
-            }
-            Ok(())
-        })();
-        drop(target_lock.take());
-        if held_lock && !whole_workspace && !had_lock && workspace.join("write.lock").is_file() {
-            let _ = fs::remove_file(workspace.join("write.lock"));
-        }
-        if !had_workspace {
-            let _ = fs::remove_dir(&workspace);
-        }
-        if rollback.is_err() {
-            let path = saved.keep();
-            return Err(AppError::new(
-                "MIGRATION_ROLLBACK_FAILED",
-                &format!(
-                    "迁移未完成，替换前的内容已保留在 {}，请勿删除",
-                    path.display()
-                ),
-            ));
-        }
-    }
-    drop(target_lock);
-    drop(source_lock);
-    result.map(Some)
+    io::path(&crate::services::workspace::available_root(db)?, name)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        db,
         models::{CreateProject, CreateTask},
-        portable,
+        portable::{self, documents, transfer},
+        services,
     };
+    use std::path::PathBuf;
 
     struct Fixture {
         temp: tempfile::TempDir,
@@ -323,17 +152,17 @@ mod tests {
             fs::create_dir(&path).unwrap();
             path
         }
-        fn select(&self, target: &Path) {
-            select(&self.bootstrap, target, |_| true).unwrap().unwrap();
+        fn select(&self, root: &Path) -> WorkspaceStatus {
+            select(&self.bootstrap, root).unwrap()
         }
-        fn task(&self, project_id: Option<String>) -> String {
+        fn task(&self, title: &str, project_id: Option<String>) -> String {
             portable::execute(&self.bootstrap, true, |db| {
                 Ok(services::tasks::create(
                     db,
                     CreateTask {
-                        title: "迁移待办".into(),
+                        title: title.into(),
                         project_id,
-                        priority: "medium".into(),
+                        priority: "low".into(),
                         plan_date: None,
                     },
                 )?
@@ -341,232 +170,401 @@ mod tests {
             })
             .unwrap()
         }
+        fn titles(&self) -> Vec<String> {
+            portable::execute(&self.bootstrap, false, |db| {
+                Ok(services::tasks::list(db)?
+                    .into_iter()
+                    .map(|task| task.title)
+                    .collect())
+            })
+            .unwrap()
+        }
     }
+
     #[test]
-    fn initial_selection_accepts_nonempty_folder_and_preserves_unrelated_content() {
+    fn switching_folders_keeps_projects_tasks_attachments_drafts_and_source_independent() {
         let f = Fixture::new();
-        assert!(portable::binding(&f.bootstrap).unwrap().is_none());
-        let target = f.folder("用户目录");
-        fs::write(target.join("已有文档.txt"), b"keep").unwrap();
-        #[cfg(unix)]
-        std::os::unix::fs::symlink("已有文档.txt", target.join("快捷方式")).unwrap();
-        select(&f.bootstrap, &target, |_| {
-            panic!("unrelated entries need no confirmation")
-        })
-        .unwrap()
-        .unwrap();
-        documents::load(&target).unwrap();
-        assert!(target.join("Files").is_dir());
-        assert!(target.join("todo.json").is_file());
-        assert_eq!(fs::read(target.join("已有文档.txt")).unwrap(), b"keep");
-        #[cfg(unix)]
-        assert!(target.join("快捷方式").is_symlink());
-    }
-    #[test]
-    fn declining_initial_replacement_creates_no_workspace_files() {
-        let f = Fixture::new();
-        let target = f.folder("已有配置");
-        fs::write(target.join("config.json"), b"original").unwrap();
-        assert!(select(&f.bootstrap, &target, |conflicts| {
-            assert_eq!(conflicts, ["config.json"]);
-            false
-        })
-        .unwrap()
-        .is_none());
-        assert_eq!(fs::read(target.join("config.json")).unwrap(), b"original");
-        assert!(!target.join(".workspace").exists());
-        assert!(!target.join("Files").exists());
-        assert!(portable::binding(&f.bootstrap).unwrap().is_none());
-    }
-    #[test]
-    fn initial_replacement_handles_same_name_files_and_directories_and_legacy_tasks() {
-        let f = Fixture::new();
-        let task = f.task(None);
-        let target = f.folder("初始化");
-        fs::create_dir(target.join("config.json")).unwrap();
-        fs::write(target.join("config.json/old"), b"old").unwrap();
-        fs::write(target.join("Files"), b"old file").unwrap();
-        fs::write(target.join(".workspace"), b"old internal name").unwrap();
-        fs::write(target.join("保留.txt"), b"keep").unwrap();
-        f.select(&target);
-        assert!(target.join("Files").is_dir());
-        assert!(target.join(".workspace").is_dir());
-        assert_eq!(
-            documents::load(&target).unwrap()["todo.json"]["tasks"][0]["id"],
-            task
-        );
-        assert_eq!(fs::read(target.join("保留.txt")).unwrap(), b"keep");
-    }
-    #[test]
-    fn migration_preserves_projects_attachments_drafts_and_source() {
-        let f = Fixture::new();
-        let source = f.folder("原目录");
-        f.select(&source);
+        let a = f.folder("A");
+        let b = f.folder("B");
+        let first = f.select(&a);
         let project = portable::execute(&f.bootstrap, true, |db| {
             services::projects::create(
                 db,
                 CreateProject {
-                    name: "农田管理".into(),
-                    color: "#1677FF".into(),
+                    name: "项目A".into(),
+                    color: "#123456".into(),
                     ..Default::default()
                 },
             )
         })
         .unwrap();
-        let task = f.task(Some(project.id));
-        let attachment = f.temp.path().join("照片.png");
+        let task = f.task("A的待办", Some(project.id.clone()));
+        let attachment = f.temp.path().join("附件.png");
         fs::write(&attachment, b"image").unwrap();
         portable::execute(&f.bootstrap, true, |db| {
-            services::attachments::import(db, &task, &attachment)
+            services::attachments::import(db, &task, &attachment)?;
+            services::preferences::set(db, "capture_draft", "A的草稿")?;
+            services::preferences::set(db, "appearance", "dark")
         })
         .unwrap();
-        portable::execute(&f.bootstrap, true, |db| {
-            services::preferences::set(db, "capture_draft", "{\"title\":\"草稿\"}")
-        })
-        .unwrap();
-        let before = transfer::inventory(&source).unwrap();
-        let target = f.folder("目标目录");
-        fs::create_dir(target.join("农田管理")).unwrap();
-        fs::write(target.join("农田管理/旧文件"), b"old").unwrap();
-        fs::write(target.join("保留.txt"), b"keep").unwrap();
-        f.select(&target);
-        assert_eq!(transfer::inventory(&source).unwrap(), before);
-        assert_eq!(
-            fs::read(target.join("农田管理/Files/照片.png")).unwrap(),
-            b"image"
-        );
-        assert!(!target.join("农田管理/旧文件").exists());
-        assert_eq!(
-            portable::binding(&f.bootstrap).unwrap().unwrap().root,
-            target.canonicalize().unwrap()
-        );
+        let a_before = transfer::inventory(&a).unwrap();
+        let second = f.select(&b);
+        assert_ne!(first.binding_id, second.binding_id);
+        assert!(f.titles().is_empty());
         portable::execute(&f.bootstrap, false, |db| {
-            assert_eq!(services::tasks::list(db)?[0].id, task);
-            assert_eq!(services::attachments::list(db, &task)?.len(), 1);
+            assert!(services::projects::list(db)?.is_empty());
             assert_eq!(
                 services::preferences::get(db, "capture_draft")?.as_deref(),
-                Some("{\"title\":\"草稿\"}")
+                Some("")
+            );
+            assert_eq!(
+                services::preferences::get(db, "appearance")?.as_deref(),
+                Some("system")
             );
             Ok(())
         })
         .unwrap();
+        assert_eq!(transfer::inventory(&a).unwrap(), a_before);
+        assert!(!b.join("项目A").exists());
+        f.task("B的待办", None);
+        let b_before = transfer::inventory(&b).unwrap();
+        f.select(&a);
+        assert_eq!(f.titles(), vec!["A的待办"]);
+        portable::execute(&f.bootstrap, false, |db| {
+            assert_eq!(services::attachments::list(db, &task)?.len(), 1);
+            assert_eq!(
+                services::preferences::get(db, "capture_draft")?.as_deref(),
+                Some("A的草稿")
+            );
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(transfer::inventory(&b).unwrap(), b_before);
+        f.select(&b);
+        assert_eq!(f.titles(), vec!["B的待办"]);
     }
+
     #[test]
-    fn changes_during_confirmation_abort_without_replacing_files() {
+    fn ordinary_folder_is_initialized_without_moving_or_overwriting_any_content() {
         let f = Fixture::new();
-        let source = f.folder("source");
-        f.select(&source);
-        let target = f.folder("target");
-        fs::write(target.join("config.json"), b"original").unwrap();
-        let result = select(&f.bootstrap, &target, |_| {
-            fs::write(target.join("config.json"), b"external edit").unwrap();
-            true
-        });
-        assert_eq!(result.unwrap_err().code, "DESTINATION_CHANGED");
+        let root = f.folder("普通目录");
+        fs::write(root.join("说明.txt"), b"original").unwrap();
+        fs::create_dir(root.join("普通子目录")).unwrap();
+        fs::write(root.join("普通子目录/文件.txt"), b"nested").unwrap();
+        fs::create_dir(root.join("Files")).unwrap();
+        fs::write(root.join("Files/已有文件.txt"), b"files").unwrap();
+        f.select(&root);
+        assert_eq!(fs::read(root.join("说明.txt")).unwrap(), b"original");
         assert_eq!(
-            fs::read(target.join("config.json")).unwrap(),
-            b"external edit"
+            fs::read(root.join("普通子目录/文件.txt")).unwrap(),
+            b"nested"
         );
-        assert!(!target.join("Files").exists());
+        assert_eq!(fs::read(root.join("Files/已有文件.txt")).unwrap(), b"files");
+        assert!(documents::load(&root).unwrap()["config.json"]["projects"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(f.titles().is_empty());
+    }
+
+    #[test]
+    fn unavailable_source_does_not_block_selecting_or_reopening_another_folder() {
+        let f = Fixture::new();
+        let a = f.folder("A");
+        let b = f.folder("B");
+        f.select(&a);
+        f.task("原待办", None);
+        let moved = f.temp.path().join("移动后的A");
+        fs::rename(&a, &moved).unwrap();
+        let binding = portable::binding(&f.bootstrap).unwrap().unwrap();
+        let cache = portable::cache_path(&f.bootstrap, &binding);
+        for file in [
+            cache.clone(),
+            cache.with_extension("db-wal"),
+            cache.with_extension("db-shm"),
+        ] {
+            if file.exists() {
+                fs::remove_file(file).unwrap();
+            }
+        }
+        let status = portable::workspace_status(&f.bootstrap).unwrap();
+        assert_eq!(status.root_path.as_deref(), binding.root.to_str());
+        assert!(!status.available);
+        assert!(status.read_only);
+        f.select(&b);
+        assert!(f.titles().is_empty());
+        assert!(!a.exists());
+        f.select(&moved);
+        assert_eq!(f.titles(), vec!["原待办"]);
+    }
+
+    #[test]
+    fn invalid_target_preserves_binding_and_all_original_files() {
+        let f = Fixture::new();
+        let a = f.folder("A");
+        let b = f.folder("B");
+        f.select(&a);
+        f.task("原待办", None);
+        let before = fs::read(f.bootstrap.with_file_name("device.json")).unwrap();
+        let config = b.join("config.json");
+        fs::write(&config, b"{\"user\":true}").unwrap();
+        assert_eq!(
+            select(&f.bootstrap, &b).unwrap_err().code,
+            "STORAGE_FILE_CONFLICT"
+        );
+        assert_eq!(fs::read(&config).unwrap(), b"{\"user\":true}");
+        assert!(!b.join("todo.json").exists());
+        assert!(!b.join(".workspace").exists());
+        assert_eq!(
+            fs::read(f.bootstrap.with_file_name("device.json")).unwrap(),
+            before
+        );
+        assert_eq!(f.titles(), vec!["原待办"]);
+    }
+
+    #[test]
+    fn existing_todo_or_reserved_file_is_never_overwritten() {
+        let f = Fixture::new();
+        let root = f.folder("冲突目录");
+        fs::write(root.join("todo.json"), b"personal todo").unwrap();
+        assert_eq!(
+            select(&f.bootstrap, &root).unwrap_err().code,
+            "STORAGE_FILE_CONFLICT"
+        );
+        assert_eq!(fs::read(root.join("todo.json")).unwrap(), b"personal todo");
+        assert!(!root.join("config.json").exists());
+        let root = f.folder("冲突文件");
+        fs::write(root.join("Files"), b"user file").unwrap();
+        assert_eq!(
+            select(&f.bootstrap, &root).unwrap_err().code,
+            "STORAGE_FILE_CONFLICT"
+        );
+        assert_eq!(fs::read(root.join("Files")).unwrap(), b"user file");
+    }
+
+    #[test]
+    fn external_json_edits_refresh_cache_without_historical_hash_or_revision_approval() {
+        let f = Fixture::new();
+        let root = f.folder("目录");
+        f.select(&root);
+        f.task("旧标题", None);
+        let path = root.join("todo.json");
+        let mut todo = io::read(&path).unwrap();
+        todo["tasks"][0]["title"] = serde_json::json!("外部修改");
+        todo.as_object_mut().unwrap().remove("revision");
+        io::write(&path, &todo).unwrap();
+        assert_eq!(f.titles(), vec!["外部修改"]);
+        let config = root.join("config.json");
+        let mut value = io::read(&config).unwrap();
+        value.as_object_mut().unwrap().remove("snapshot");
+        io::write(&config, &value).unwrap();
+        f.select(&root);
+        assert_eq!(f.titles(), vec!["外部修改"]);
+        f.task("新增", None);
+        assert_eq!(f.titles().len(), 2);
+    }
+
+    #[test]
+    fn directory_copy_at_same_path_does_not_require_inode_approval() {
+        let f = Fixture::new();
+        let root = f.folder("目录");
+        f.select(&root);
+        f.task("保留待办", None);
+        let original = f.temp.path().join("old");
+        fs::rename(&root, &original).unwrap();
+        services::safe_fs::copy_tree(&original, &root).unwrap();
+        assert_eq!(f.titles(), vec!["保留待办"]);
+        f.task("复制后新增", None);
+        assert_eq!(f.titles().len(), 2);
+        assert_eq!(
+            documents::load(&original).unwrap()["todo.json"]["tasks"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn selecting_same_directory_refreshes_without_changing_binding() {
+        let f = Fixture::new();
+        let root = f.folder("目录");
+        let first = f.select(&root);
+        f.task("保留", None);
+        let before = transfer::inventory(&root).unwrap();
+        assert_eq!(f.select(&root).binding_id, first.binding_id);
+        assert_eq!(transfer::inventory(&root).unwrap(), before);
+    }
+
+    #[test]
+    fn first_selection_does_not_copy_legacy_database_tasks() {
+        let f = Fixture::new();
+        f.task("旧数据库待办", None);
+        let root = f.folder("目录");
+        f.select(&root);
+        assert!(f.titles().is_empty());
+        assert_eq!(
+            services::tasks::list(&db::connect(&f.bootstrap).unwrap()).unwrap()[0].title,
+            "旧数据库待办"
+        );
+    }
+
+    #[test]
+    fn invalid_json_does_not_switch_binding_or_modify_target() {
+        let f = Fixture::new();
+        let a = f.folder("A");
+        let b = f.folder("B");
+        f.select(&a);
+        f.task("A待办", None);
+        f.select(&b);
+        f.task("B待办", None);
+        f.select(&a);
+        fs::write(b.join("todo.json"), b"broken json").unwrap();
+        let before = transfer::inventory(&b).unwrap();
+        let binding = portable::binding(&f.bootstrap).unwrap().unwrap().id;
+        assert!(select(&f.bootstrap, &b).is_err());
+        assert_eq!(
+            portable::binding(&f.bootstrap).unwrap().unwrap().id,
+            binding
+        );
+        assert_eq!(transfer::inventory(&b).unwrap(), before);
+        assert_eq!(f.titles(), vec!["A待办"]);
+    }
+
+    #[test]
+    fn target_in_use_does_not_switch_binding() {
+        let f = Fixture::new();
+        let a = f.folder("A");
+        let b = f.folder("B");
+        f.select(&a);
+        f.select(&b);
+        f.select(&a);
+        let lock = io::lock(&b).unwrap();
+        assert_eq!(select(&f.bootstrap, &b).unwrap_err().code, "WORKSPACE_BUSY");
         assert_eq!(
             portable::binding(&f.bootstrap).unwrap().unwrap().root,
-            source.canonicalize().unwrap()
+            a.canonicalize().unwrap()
         );
-        let result = select(&f.bootstrap, &target, |_| {
-            fs::write(source.join("external.txt"), b"external edit").unwrap();
-            true
-        });
-        assert_eq!(result.unwrap_err().code, "SOURCE_CHANGED");
-        assert_eq!(
-            fs::read(target.join("config.json")).unwrap(),
-            b"external edit"
-        );
-    }
-    #[test]
-    fn failed_binding_restores_replaced_content_and_keeps_source_binding() {
-        for workspace_kind in ["absent", "file", "directory"] {
-            let f = Fixture::new();
-            let source = f.folder("source");
-            f.select(&source);
-            let original_binding = fs::read(f.bootstrap.with_file_name("device.json")).unwrap();
-            let target = f.folder("target");
-            fs::write(target.join("config.json"), b"original config").unwrap();
-            fs::create_dir(target.join("Files")).unwrap();
-            fs::write(target.join("Files/原文件"), b"original attachment").unwrap();
-            if workspace_kind == "file" {
-                fs::write(target.join(".workspace"), b"original internal file").unwrap();
-            } else if workspace_kind == "directory" {
-                fs::create_dir(target.join(".workspace")).unwrap();
-                fs::create_dir(target.join(".workspace/transactions")).unwrap();
-                fs::write(
-                    target.join(".workspace/transactions/original"),
-                    b"original journal",
-                )
-                .unwrap();
-                fs::write(target.join(".workspace/unrelated"), b"keep").unwrap();
-            }
-            let before = transfer::inventory(&target).unwrap();
-            // Force an error after the files are installed, before committing the binding.
-            fs::remove_dir_all(f.bootstrap.parent().unwrap().join("cache")).unwrap();
-            fs::write(
-                f.bootstrap.parent().unwrap().join("cache"),
-                b"block cache creation",
-            )
-            .unwrap();
-            assert!(select(&f.bootstrap, &target, |_| true).is_err());
-            assert_eq!(transfer::inventory(&target).unwrap(), before);
-            assert_eq!(
-                target.join(".workspace").exists(),
-                workspace_kind != "absent"
-            );
-            assert_eq!(
-                fs::read(f.bootstrap.with_file_name("device.json")).unwrap(),
-                original_binding
-            );
-        }
-    }
-    #[test]
-    fn active_target_lock_is_respected_and_kept_intact() {
-        let f = Fixture::new();
-        let target = f.folder("target");
-        let lock = io::lock(&target).unwrap();
-        let identity = io::fingerprint(&target.join(".workspace/write.lock")).unwrap();
-        assert_eq!(
-            select(&f.bootstrap, &target, |_| true).unwrap_err().code,
-            "WORKSPACE_BUSY"
-        );
-        assert_eq!(
-            io::fingerprint(&target.join(".workspace/write.lock")).unwrap(),
-            identity
-        );
-        assert!(!target.join("config.json").exists());
-        assert!(io::lock(&target).is_err());
         drop(lock);
     }
     #[test]
-    fn same_directory_is_noop_and_nested_directory_is_rejected() {
+    fn ordinary_entries_are_visible_in_place_without_exposing_metadata_or_registered_projects() {
         let f = Fixture::new();
-        let source = f.folder("source");
-        f.select(&source);
-        let original = portable::binding(&f.bootstrap).unwrap().unwrap().id;
-        select(&f.bootstrap, &source, |_| panic!("same directory"))
-            .unwrap()
-            .unwrap();
+        let root = f.folder("目录");
+        fs::create_dir(root.join("普通子目录")).unwrap();
+        fs::write(root.join("说明.txt"), b"original").unwrap();
+        f.select(&root);
+        portable::execute(&f.bootstrap, true, |db| {
+            services::projects::create(
+                db,
+                CreateProject {
+                    name: "已登记项目".into(),
+                    color: "#123456".into(),
+                    ..Default::default()
+                },
+            )
+        })
+        .unwrap();
+        portable::execute(&f.bootstrap, false, |db| {
+            let items = entries(db)?;
+            assert_eq!(
+                items
+                    .iter()
+                    .map(|entry| entry.name.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["普通子目录", "说明.txt"]
+            );
+            assert!(items[0].directory);
+            assert_eq!(
+                entry_path(db, "说明.txt")?,
+                root.canonicalize()?.join("说明.txt")
+            );
+            assert!(entry_path(db, "../device/app.db").is_err());
+            assert!(entry_path(db, "config.json").is_err());
+            assert!(entry_path(db, "已登记项目").is_err());
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn edits_during_a_write_are_preserved_instead_of_overwritten() {
+        let f = Fixture::new();
+        let root = f.folder("目录");
+        f.select(&root);
+        f.task("原标题", None);
+        let path = root.join("todo.json");
+        let error = portable::execute(&f.bootstrap, true, |db| {
+            let mut todo = io::read(&path)?;
+            todo["tasks"][0]["title"] = serde_json::json!("写入期间的外部修改");
+            io::write(&path, &todo)?;
+            services::tasks::create(
+                db,
+                CreateTask {
+                    title: "应用新增".into(),
+                    project_id: None,
+                    priority: "low".into(),
+                    plan_date: None,
+                },
+            )
+        })
+        .unwrap_err();
+        assert_eq!(error.code, "WORKSPACE_CONFLICT");
+        let todo = io::read(&path).unwrap();
+        assert_eq!(todo["tasks"][0]["title"], "写入期间的外部修改");
+        assert_eq!(todo["tasks"].as_array().unwrap().len(), 1);
+        let next = f.folder("其他目录");
+        f.select(&next);
+        assert!(f.titles().is_empty());
+    }
+
+    #[test]
+    fn reminders_follow_the_selected_folder_and_stale_drafts_are_recovered_locally() {
+        let f = Fixture::new();
+        let a = f.folder("A");
+        let b = f.folder("B");
+        let original = f.select(&a);
+        let task = f.task("待提醒", None);
+        let at = (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
+        portable::execute(&f.bootstrap, true, |db| {
+            services::reminders::schedule(db, &task, Some(&at))
+        })
+        .unwrap();
+        f.select(&b);
+        let later = (chrono::Utc::now() + chrono::Duration::hours(2)).to_rfc3339();
+        portable::execute(&f.bootstrap, false, |db| {
+            assert!(services::reminders::due(db, &later)?.is_empty());
+            Ok(())
+        })
+        .unwrap();
         assert_eq!(
-            portable::binding(&f.bootstrap).unwrap().unwrap().id,
-            original
-        );
-        let child = source.join("child");
-        fs::create_dir(&child).unwrap();
-        assert_eq!(
-            select(&f.bootstrap, &child, |_| true).unwrap_err().code,
-            "INVALID_DESTINATION"
-        );
-        assert_eq!(
-            select(&f.bootstrap, f.temp.path(), |_| true)
+            portable::require_binding(&f.bootstrap, original.binding_id.as_deref())
                 .unwrap_err()
                 .code,
-            "INVALID_DESTINATION"
+            "WORKSPACE_CHANGED"
         );
+        let recovery = portable::recovery::save(
+            &f.bootstrap,
+            original.binding_id.as_deref(),
+            Some("A的未保存草稿"),
+            None,
+            "目录已更换",
+        )
+        .unwrap();
+        assert_eq!(io::read(&recovery).unwrap()["text"], "A的未保存草稿");
+        portable::execute(&f.bootstrap, false, |db| {
+            assert_eq!(
+                services::preferences::get(db, "capture_draft")?.as_deref(),
+                Some("")
+            );
+            Ok(())
+        })
+        .unwrap();
+        f.select(&a);
+        portable::execute(&f.bootstrap, false, |db| {
+            assert_eq!(services::reminders::due(db, &later)?.len(), 1);
+            Ok(())
+        })
+        .unwrap();
     }
 }

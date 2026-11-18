@@ -202,16 +202,21 @@ pub fn recover(root: &Path) -> AppResult<()> {
         let members = |root: Option<&Value>| -> AppResult<std::collections::HashSet<String>> {
             let mut paths = std::collections::HashSet::from(["config.json".to_string()]);
             if let Some(root) = root {
-                for entry in root["snapshot"]["documents"]
-                    .as_array()
-                    .ok_or_else(|| io::invalid("事务提交清单无效"))?
-                {
-                    paths.insert(
-                        entry["path"]
-                            .as_str()
-                            .ok_or_else(|| io::invalid("事务路径无效"))?
-                            .to_string(),
-                    );
+                paths.insert("todo.json".into());
+                for project in super::documents::items(root, "projects")? {
+                    let directory = super::documents::text(project, "directory")?;
+                    for name in [
+                        format!("{directory}/config.json"),
+                        format!("{directory}/todo.json"),
+                    ] {
+                        io::relative(&name)?;
+                        paths.insert(name);
+                    }
+                }
+                for draft in super::documents::items(root, "drafts")? {
+                    let name = super::documents::text(draft, "document")?;
+                    io::relative(name)?;
+                    paths.insert(name.to_string());
                 }
             }
             Ok(paths)

@@ -305,9 +305,7 @@ mod tests {
         db::initialize(&bootstrap).unwrap();
         let root = directory.path().join("workspace");
         std::fs::create_dir(&root).unwrap();
-        portable::location::select(&bootstrap, &root, |_| true)
-            .unwrap()
-            .unwrap();
+        portable::location::select(&bootstrap, &root).unwrap();
         let input = |status: &str| UpdateTask {
             title: "完成日期".into(),
             project_id: None,
@@ -364,9 +362,7 @@ mod tests {
         db::initialize(&bootstrap).unwrap();
         let root = directory.path().join("workspace");
         std::fs::create_dir(&root).unwrap();
-        portable::location::select(&bootstrap, &root, |_| true)
-            .unwrap()
-            .unwrap();
+        portable::location::select(&bootstrap, &root).unwrap();
         let input = |priority: &str| CreateTask {
             title: priority.into(),
             project_id: None,
