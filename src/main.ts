@@ -15,6 +15,9 @@ const pinia = createPinia()
 // Apply the saved theme before mounting the first frame.
 async function bootstrap() {
   await useThemeStore(pinia).hydrate()
-  createApp(App).use(pinia).use(router).mount('#app')
+  const app = createApp(App).use(pinia).use(router)
+  // Resolve the initial route before mounting window-specific UI and listeners.
+  await router.isReady()
+  app.mount('#app')
 }
 void bootstrap()

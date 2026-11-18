@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { desktop } from '../services/api'
@@ -20,6 +21,7 @@ export function useTrayActions() {
   let processing = Promise.resolve()
 
   async function drain() {
+    if (closed) return
     const actions = await invoke<TrayAction[]>('tray_take_actions')
     for (const action of actions) {
       if (closed) return
@@ -48,7 +50,7 @@ export function useTrayActions() {
     })
   }
   onMounted(async () => {
-    if (!desktop) return
+    if (!desktop || getCurrentWindow().label !== 'main') return
     try {
       const off = await listen('tray-actions-available', schedule)
       if (closed) return off()
