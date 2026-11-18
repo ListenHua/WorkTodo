@@ -1,6 +1,6 @@
 [package]
 name = "project-manage"
-version = "0.0.1"
+version = "0.0.2"
 description = "Local-first project and task workspace"
 authors = ["Project Manage"]
 edition = "2021"

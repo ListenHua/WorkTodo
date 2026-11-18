@@ -12,7 +12,8 @@
 - **项目链接**：管理常用网站，使用官方图标、名称首字或提取的网站图标，支持拖拽调整顺序，点击后在系统默认浏览器中打开。
 - **快捷采集**：通过全局快捷键或自定义鼠标、键盘按键长按采集文本与图片，默认使用鼠标中键。
 - **桌面提醒**：截止时间提醒、提醒中心、托盘常驻与后台通知。
-- **概览仪表盘**：集中查看待办、项目与提醒，快速进入今天、逾期和未来七天的任务。
+- **全局快捷键**：快捷添加待办（macOS：Control + Command + D；Windows：Ctrl + Alt + D）、显示/隐藏窗口（macOS：Control + Command + E；Windows：Ctrl + Alt + E），可在“设置 → 桌面与提醒”修改、停用或恢复默认，冲突时提示并保留原绑定。
+- **概览仪表盘**：自适应铺满窗口的统计卡片与滚动数字，展示项目待办柱状图、今天及前后三天共七天的新增与完成趋势，集中查看今日待办、逾期任务及项目进度。
 - **目录存储**：手动选择本地文件夹并初始化，迁移项目、待办、配置及附件，支持非空目录与同名内容替换确认。
 - **个性化设置**：中文界面、明暗主题切换与跟随系统，自定义采集和提醒偏好。
 
@@ -44,7 +45,7 @@
 
 ## 开始开发
 
-技术栈：Tauri 2、Vue 3、TypeScript、Rust、SQLite、Pinia、Naive UI 和 MingCute。主题色为 `#1677FF`，使用 Magic UI Animated Theme Toggler 的 Vue 适配版切换主题。
+技术栈：Tauri 2、Vue 3、TypeScript、Rust、SQLite、Pinia、Naive UI 和 MingCute。默认采用黑白主题，浅色模式主题色为 `#000000`，深色模式采用反向黑白配色，使用 Magic UI Animated Theme Toggler 的 Vue 适配版切换主题。
 
 需要 Node.js 22、pnpm 9.15、Rust stable 和对应平台的原生构建工具。macOS 需要 Xcode Command Line Tools；Windows 需要 MSVC Build Tools（C++ 桌面开发与 Windows SDK）和 WebView2。
 
