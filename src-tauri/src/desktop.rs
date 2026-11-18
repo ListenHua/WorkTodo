@@ -15,10 +15,10 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
-use tauri_plugin_notification::NotificationExt;
 
 #[derive(Default)]
 pub struct DesktopState {
+    pub pending_tray_actions: Mutex<Vec<crate::tray::TrayAction>>,
     pub flush_exit: AtomicBool,
     pub capture_ready: AtomicBool,
     pub shortcut_error: Mutex<String>,
@@ -30,6 +30,8 @@ pub struct DesktopState {
     pub capture_epoch: AtomicU64,
     pub keyboard_hold: Mutex<middle_capture::KeyboardHold>,
     pub capture_shortcut: Mutex<Option<Shortcut>>,
+    pub shortcut_bindings: Mutex<Vec<crate::shortcuts::Binding>>,
+    pub recording_shortcut: AtomicBool,
     pub capture_busy: AtomicBool,
     pub selection: Mutex<Option<Capture>>,
     pub image: Mutex<Option<std::path::PathBuf>>,
@@ -72,77 +74,31 @@ pub fn capture_shortcut(settings: &DesktopSettings) -> AppResult<Option<Shortcut
         .map_err(|_| AppError::new("INVALID_SETTINGS", "采集快捷键无效"))
 }
 
-pub struct PreparedCaptureShortcut {
-    previous: Option<Shortcut>,
-    next: Option<Shortcut>,
-}
-impl PreparedCaptureShortcut {
-    pub fn rollback(&self, app: &AppHandle) {
-        if self.next != self.previous {
-            if let Some(next) = self.next {
-                let _ = app.global_shortcut().unregister(next);
-            }
-        }
-    }
-    pub fn commit(self, app: &AppHandle) {
-        *app.state::<DesktopState>().capture_shortcut.lock().unwrap() = self.next;
-        if self.previous != self.next {
-            if let Some(previous) = self.previous {
-                let _ = app.global_shortcut().unregister(previous);
-            }
-        }
-    }
-}
-// Register first, then persist and retire the previous binding. Failed saves keep the old binding.
-pub fn prepare_capture_shortcut(
+pub fn handle_capture_shortcut(
     app: &AppHandle,
-    settings: &DesktopSettings,
-) -> AppResult<PreparedCaptureShortcut> {
-    let next = capture_shortcut(settings)?;
-    let previous = *app.state::<DesktopState>().capture_shortcut.lock().unwrap();
-    if next != previous {
-        if let Some(shortcut) = next {
-            app.global_shortcut()
-                .on_shortcut(shortcut, move |app, event_shortcut, event| {
-                    let state = app.state::<DesktopState>();
-                    if *state.capture_shortcut.lock().unwrap() != Some(*event_shortcut) {
-                        return;
-                    }
-                    let epoch = state.capture_epoch.load(Ordering::SeqCst);
-                    let config = state.capture_config.lock().unwrap().clone();
-                    if !config.enabled
-                        || crate::middle_capture::mouse_button(&config.trigger).is_some()
-                    {
-                        return;
-                    }
-                    let mut hold = state.keyboard_hold.lock().unwrap();
-                    if state.capture_epoch.load(Ordering::SeqCst) != epoch {
-                        return;
-                    }
-                    match event.state {
-                        ShortcutState::Pressed => {
-                            hold.press(std::time::Instant::now(), config.hold_ms)
-                        }
-                        ShortcutState::Released => {
-                            let should_capture = hold.release(std::time::Instant::now());
-                            drop(hold);
-                            if should_capture {
-                                collect_capture(app.clone(), epoch, true);
-                            }
-                        }
-                    }
-                })
-                .map_err(|_| {
-                    AppError::new(
-                        "SHORTCUT_CONFLICT",
-                        "采集快捷键无效或已被占用，请更换组合；原设置已保留",
-                    )
-                })?;
+    event: tauri_plugin_global_shortcut::ShortcutEvent,
+) {
+    let state = app.state::<DesktopState>();
+    let epoch = state.capture_epoch.load(Ordering::SeqCst);
+    let config = state.capture_config.lock().unwrap().clone();
+    if !config.enabled || crate::middle_capture::mouse_button(&config.trigger).is_some() {
+        return;
+    }
+    let mut hold = state.keyboard_hold.lock().unwrap();
+    if state.capture_epoch.load(Ordering::SeqCst) != epoch {
+        return;
+    }
+    match event.state {
+        ShortcutState::Pressed => hold.press(std::time::Instant::now(), config.hold_ms),
+        ShortcutState::Released => {
+            let should_capture = hold.release(std::time::Instant::now());
+            drop(hold);
+            if should_capture {
+                collect_capture(app.clone(), epoch, true);
+            }
         }
     }
-    Ok(PreparedCaptureShortcut { previous, next })
 }
-
 pub fn show_main(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -171,77 +127,13 @@ pub fn show_capture(app: &AppHandle) -> AppResult<()> {
     }
     Ok(())
 }
-pub fn register_shortcut(app: &AppHandle, shortcut: &str) -> AppResult<()> {
-    if shortcut.is_empty() {
-        return Ok(());
-    }
-    app.global_shortcut()
-        .on_shortcut(shortcut, |app, _, event| {
-            if event.state == ShortcutState::Pressed {
-                let _ = show_capture(app);
-            }
-        })
-        .map_err(|_| AppError::new("SHORTCUT_CONFLICT", "快捷键无效或已被占用，请更换组合"))
-}
 pub fn initialize(app: &AppHandle) -> AppResult<()> {
-    use tauri::{
-        menu::{Menu, MenuItem},
-        tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    };
-    let show = MenuItem::with_id(app, "show", "打开项目工作台", true, None::<&str>)
-        .map_err(|_| AppError::new("TRAY_ERROR", "无法创建托盘菜单"))?;
-    let quick = MenuItem::with_id(app, "quick", "快速添加", true, None::<&str>)
-        .map_err(|_| AppError::new("TRAY_ERROR", "无法创建托盘菜单"))?;
-    let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)
-        .map_err(|_| AppError::new("TRAY_ERROR", "无法创建托盘菜单"))?;
-    let menu = Menu::with_items(app, &[&show, &quick, &quit])
-        .map_err(|_| AppError::new("TRAY_ERROR", "无法创建托盘菜单"))?;
-    let mut tray = TrayIconBuilder::with_id("workspace-tray")
-        .tooltip("项目工作台")
-        .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => show_main(app),
-            "quick" => {
-                let _ = show_capture(app);
-            }
-            "quit" => app.exit(0),
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                show_main(tray.app_handle());
-            }
-        });
-    if let Some(icon) = app.default_window_icon() {
-        tray = tray.icon(icon.clone());
-    }
-    tray.build(app)
-        .map_err(|_| AppError::new("TRAY_ERROR", "无法创建托盘图标"))?;
+    crate::tray::initialize(app)?;
     let path = app.state::<AppState>().db_path.clone();
     let settings = crate::portable::execute(&path, false, |db| services::reminders::settings(db))
         .unwrap_or_default();
-    if let Err(error) = register_shortcut(app, &settings.shortcut) {
-        *app.state::<DesktopState>().shortcut_error.lock().unwrap() = error.message;
-    }
-    let action_app = app.clone();
-    app.notification()
-        .on_action(move |action| {
-            let Some(notification) = action.notification() else {
-                return;
-            };
-            let Some(task) = notification.extra().get("taskId").and_then(|v| v.as_str()) else {
-                return;
-            };
-            show_main(&action_app);
-            let _ = action_app.emit_to("main", "open-task", task);
-        })
-        .map_err(|_| AppError::new("NOTIFICATION_ERROR", "无法监听通知点击"))?;
+    crate::shortcuts::initialize(app, &settings);
+    crate::notifications::initialize(app)?;
     start_middle(app, &settings);
     let timer_app = app.clone();
     std::thread::spawn(move || loop {
@@ -263,16 +155,15 @@ pub fn initialize(app: &AppHandle) -> AppResult<()> {
                     }
                     crate::portable::notification_delivery(&path, &reminder.id, Some("intent"))?;
 
-                    if timer_app
-                        .notification()
-                        .builder()
-                        .id(numeric_id)
-                        .title("待办提醒")
-                        .body(&reminder.title)
-                        .extra("taskId", &reminder.task_id)
-                        .extra("reminderId", &reminder.id)
-                        .show()
-                        .is_ok()
+                    if crate::notifications::send(
+                        &timer_app,
+                        &reminder.id,
+                        numeric_id,
+                        "待办提醒",
+                        &reminder.title,
+                        Some(&reminder.task_id),
+                    )
+                    .is_ok()
                     {
                         crate::portable::notification_delivery(&path, &reminder.id, Some("sent"))?;
                         let _=db.execute("UPDATE reminders SET state='sent',sent_at=?2 WHERE id=?1 AND state='pending'",rusqlite::params![reminder.id,chrono::Utc::now().to_rfc3339()]);
@@ -283,6 +174,7 @@ pub fn initialize(app: &AppHandle) -> AppResult<()> {
                             &reminder.id,
                             Some("failed"),
                         )?;
+                        let _ = timer_app.emit("reminders-changed", ());
                     }
                 }
             }
@@ -371,7 +263,7 @@ pub fn start_middle(app: &AppHandle, settings: &DesktopSettings) {
     state
         .middle_control
         .configure(config.enabled, config.hold_ms);
-    match prepare_capture_shortcut(app, settings) {
+    match crate::shortcuts::prepare_capture(app, settings) {
         Ok(change) => change.commit(app),
         Err(error) => {
             *state.middle_error.lock().unwrap() = error.message;
@@ -551,11 +443,12 @@ pub fn reload_runtime(app: &AppHandle) {
     };
     let _ = app.global_shortcut().unregister_all();
     *app.state::<DesktopState>().capture_shortcut.lock().unwrap() = None;
-    let error = register_shortcut(app, &settings.shortcut)
-        .err()
-        .map(|e| e.message)
-        .unwrap_or_default();
-    *app.state::<DesktopState>().shortcut_error.lock().unwrap() = error;
+    app.state::<DesktopState>()
+        .shortcut_bindings
+        .lock()
+        .unwrap()
+        .clear();
+    crate::shortcuts::initialize(app, &settings);
     app.state::<DesktopState>()
         .capture_epoch
         .fetch_add(1, Ordering::SeqCst);

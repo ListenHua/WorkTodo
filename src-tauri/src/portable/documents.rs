@@ -251,7 +251,10 @@ pub fn hydrate(db: &mut Connection, root: &Path, docs: &Documents) -> AppResult<
         },
     )?;
     let mut settings = serde_json::to_value(crate::models::DesktopSettings::default()).unwrap();
-    for key in ["closeToTray", "notifications"] {
+    if prefs["desktop"].get("toggleShortcut").is_none() {
+        settings.as_object_mut().unwrap().remove("toggleShortcut");
+    }
+    for key in ["closeToTray", "notifications", "toggleShortcut"] {
         if let Some(v) = prefs["desktop"].get(key) {
             settings[key] = v.clone();
         }
@@ -266,10 +269,13 @@ pub fn hydrate(db: &mut Connection, root: &Path, docs: &Documents) -> AppResult<
             settings[key] = v.clone();
         }
     }
-    let parsed: crate::models::DesktopSettings =
-        serde_json::from_value(settings.clone()).map_err(|_| io::invalid("桌面设置无效"))?;
+    let parsed = services::reminders::parse_settings(settings)?;
     services::reminders::validate_settings(&parsed)?;
-    set(&tx, "desktop_settings", &settings.to_string())?;
+    set(
+        &tx,
+        "desktop_settings",
+        &serde_json::to_string(&parsed).unwrap(),
+    )?;
     if let Some(extra) = prefs["extra"].as_object() {
         for (k, v) in extra {
             if !k.starts_with('_')
@@ -427,6 +433,7 @@ pub fn hydrate(db: &mut Connection, root: &Path, docs: &Documents) -> AppResult<
             let input: crate::models::UpdateTask =
                 serde_json::from_value(validation).map_err(|_| io::invalid("待办字段无效"))?;
             services::tasks::validate_edit(&input)?;
+            task["priority"] = json!(services::tasks::normalize_priority(&input.priority));
             task["projectId"] = if owner == "__inbox__" {
                 Value::Null
             } else {
@@ -688,7 +695,7 @@ pub fn export(db: &Connection, root: &Path, old: &Documents) -> AppResult<Docume
         })
         .map(|v| (v["key"].as_str().unwrap().to_owned(), v["value"].clone()))
         .collect::<serde_json::Map<_, _>>();
-    let mut preferences = json!({"appearance":get("appearance").unwrap_or("system"),"desktop":{"closeToTray":settings.close_to_tray,"notifications":settings.notifications,"autostart":get("autostart_desired")==Some("true")},"capture":{"shortcut":settings.shortcut,"middleCapture":settings.middle_capture,"captureTrigger":settings.capture_trigger,"middleHoldMs":settings.middle_hold_ms},"network":{"strictOffline":get("strict_offline")==Some("true")},"extra":extra});
+    let mut preferences = json!({"appearance":get("appearance").unwrap_or("system"),"desktop":{"closeToTray":settings.close_to_tray,"notifications":settings.notifications,"toggleShortcut":settings.toggle_shortcut,"autostart":get("autostart_desired")==Some("true")},"capture":{"shortcut":settings.shortcut,"middleCapture":settings.middle_capture,"captureTrigger":settings.capture_trigger,"middleHoldMs":settings.middle_hold_ms},"network":{"strictOffline":get("strict_offline")==Some("true")},"extra":extra});
     if let Some(prior) = previous {
         for section in ["desktop", "capture", "network", "extra"] {
             preferences[section] = retain(
@@ -713,6 +720,19 @@ pub fn export(db: &Connection, root: &Path, old: &Documents) -> AppResult<Docume
     config["fileOperations"] = json!(operations);
     let mut documents = Documents::new();
     let projects=rows(db,"SELECT id,name,directory_relpath AS directory,description,color,status,created_at AS createdAt,pinned,links_json AS links,tags_json AS tags FROM projects WHERE id!='__inbox__' ORDER BY id",None)?;
+    // Keep a deletion record in the workspace document after unregistering a project.
+    if let Some(previous) = previous {
+        for project in items(previous, "projects")? {
+            if !projects
+                .iter()
+                .any(|current| current["id"] == project["id"])
+            {
+                config["tombstones"].as_array_mut().ok_or_else(|| io::invalid("删除记录无效"))?.push(
+                    json!({"id":project["id"],"kind":"project","deletedAt":Utc::now().to_rfc3339(),"operationId":Uuid::new_v4().to_string()}),
+                );
+            }
+        }
+    }
     let mut buckets = vec![("__inbox__".to_owned(), "".to_owned())];
     for mut project in projects {
         let id = text(&project, "id")?.to_owned();
@@ -766,7 +786,7 @@ pub fn export(db: &Connection, root: &Path, old: &Documents) -> AppResult<Docume
         documents.insert(name, project);
         buckets.push((id, directory));
     }
-    let all=rows(db,"SELECT id,project_id AS projectId,title,description,status,priority,plan_date AS planDate,due_at AS dueAt,created_at AS createdAt,updated_at AS updatedAt,completed_at AS completedAt,deleted_at AS deletedAt FROM tasks ORDER BY id",None)?;
+    let all=rows(db,"SELECT id,project_id AS projectId,title,description,status,CASE WHEN priority='none' THEN 'low' ELSE priority END AS priority,plan_date AS planDate,due_at AS dueAt,created_at AS createdAt,updated_at AS updatedAt,completed_at AS completedAt,deleted_at AS deletedAt FROM tasks ORDER BY id",None)?;
     for (owner, directory) in buckets {
         let name = if directory.is_empty() {
             "todo.json".into()

@@ -679,3 +679,250 @@ pub fn set_pinned(connection: &Connection, id: &str, pinned: bool) -> AppResult<
     }
     Ok(())
 }
+
+/// Remove project registration while keeping user files on disk. Tasks remain restorable
+/// from the workspace trash, with their attachments copied into the inbox first.
+pub fn delete(connection: &mut Connection, id: &str) -> AppResult<()> {
+    if !list(connection)?.iter().any(|project| project.id == id) {
+        return Err(AppError::new("PROJECT_NOT_FOUND", "项目不存在"));
+    }
+    let tasks: Vec<_> = super::tasks::list(connection)?
+        .into_iter()
+        .filter(|task| task.project_id.as_deref() == Some(id))
+        .collect();
+    let mut attachments = Vec::new();
+    for task in &tasks {
+        attachments.push((
+            task.id.clone(),
+            super::attachments::copy_for_move(connection, &task.id, None)?,
+        ));
+    }
+    let transaction = connection.transaction()?;
+    for (task_id, files) in attachments {
+        transaction.execute("DELETE FROM task_files WHERE task_id=?1", [&task_id])?;
+        for file in files {
+            transaction.execute(
+                "INSERT INTO task_files(task_id,file_id) VALUES(?1,?2)",
+                params![task_id, file],
+            )?;
+        }
+    }
+    transaction.execute(
+        "UPDATE reminders SET state='dismissed' WHERE state='pending' AND task_id IN (SELECT id FROM tasks WHERE project_id=?1)",
+        [id],
+    )?;
+    transaction.execute(
+        "UPDATE tasks SET project_id=NULL,deleted_at=COALESCE(deleted_at,?2),updated_at=?2 WHERE project_id=?1",
+        params![id, Utc::now().to_rfc3339()],
+    )?;
+    transaction.execute("DELETE FROM project_files WHERE project_id=?1", [id])?;
+    transaction.execute("DELETE FROM projects WHERE id=?1", [id])?;
+    transaction.execute(
+        "DELETE FROM settings WHERE key IN ('preference:capture_project','capture_project') AND value=?1",
+        [id],
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod deletion_tests {
+    use crate::{
+        db,
+        models::{CreateProject, CreateTask},
+        portable::{self, binding, cache_path, documents, execute},
+        services,
+    };
+    use std::{fs, path::PathBuf};
+
+    struct Fixture {
+        temp: tempfile::TempDir,
+        bootstrap: PathBuf,
+        root: PathBuf,
+    }
+    impl Fixture {
+        fn new() -> Self {
+            let temp = tempfile::tempdir().unwrap();
+            let bootstrap = temp.path().join("app.db");
+            db::initialize(&bootstrap).unwrap();
+            let root = temp.path().join("workspace");
+            fs::create_dir(&root).unwrap();
+            portable::location::select(&bootstrap, &root, |_| true)
+                .unwrap()
+                .unwrap();
+            Self {
+                temp,
+                bootstrap,
+                root,
+            }
+        }
+        fn project(&self, name: &str) -> String {
+            execute(&self.bootstrap, true, |db| {
+                Ok(services::projects::create(
+                    db,
+                    CreateProject {
+                        name: name.into(),
+                        color: "#000000".into(),
+                        ..Default::default()
+                    },
+                )?
+                .id)
+            })
+            .unwrap()
+        }
+        fn task(&self, project_id: Option<String>) -> String {
+            execute(&self.bootstrap, true, |db| {
+                Ok(services::tasks::create(
+                    db,
+                    CreateTask {
+                        title: "待办".into(),
+                        project_id,
+                        priority: "low".into(),
+                        plan_date: None,
+                    },
+                )?
+                .id)
+            })
+            .unwrap()
+        }
+    }
+
+    #[test]
+    fn deleting_project_preserves_files_and_restorable_tasks_after_cache_rebuild() {
+        let f = Fixture::new();
+        let project = f.project("删除项目");
+        let other = f.project("保留项目");
+        let pending = f.task(Some(project.clone()));
+        let done = f.task(Some(project.clone()));
+        let canceled = f.task(Some(project.clone()));
+        let trashed = f.task(Some(project.clone()));
+        let unrelated = f.task(Some(other.clone()));
+        let source = f.temp.path().join("附件.txt");
+        fs::write(&source, b"keep attachment").unwrap();
+        let file = execute(&f.bootstrap, true, |db| {
+            let file = services::attachments::import(db, &pending, &source)?;
+            services::attachments::link(db, &trashed, &file.id)?;
+            services::tasks::set_completed(db, &done, true)?;
+            db.execute(
+                "UPDATE tasks SET status='canceled' WHERE id=?1",
+                [&canceled],
+            )?;
+            services::tasks::trash(db, &trashed, false)?;
+            services::reminders::schedule(db, &pending, Some("2099-01-01T10:00:00Z"))?;
+            services::preferences::set(db, "capture_project", &project)?;
+            services::preferences::set(db, "capture_draft", "保留草稿")?;
+            Ok(file)
+        })
+        .unwrap();
+        let original = f.root.join("删除项目/Files/附件.txt");
+        fs::write(f.root.join("删除项目/用户文件.txt"), b"user data").unwrap();
+        execute(&f.bootstrap, true, |db| {
+            services::projects::delete(db, &project)
+        })
+        .unwrap();
+        assert_eq!(fs::read(&original).unwrap(), b"keep attachment");
+        assert_eq!(
+            fs::read(f.root.join("删除项目/用户文件.txt")).unwrap(),
+            b"user data"
+        );
+        let docs = documents::load(&f.root).unwrap();
+        assert_eq!(docs["config.json"]["projects"].as_array().unwrap().len(), 1);
+        assert!(docs["config.json"]["tombstones"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["kind"] == "project" && entry["id"] == project));
+        assert!(!docs.contains_key("删除项目/config.json"));
+        assert!(!docs.contains_key("删除项目/todo.json"));
+        assert!(
+            docs[&format!(".workspace/drafts/{}/draft.json", documents::QUICK_DRAFT)]
+                ["targetProjectId"]
+                .is_null()
+        );
+        let binding = binding(&f.bootstrap).unwrap().unwrap();
+        fs::remove_file(cache_path(&f.bootstrap, &binding)).unwrap();
+        execute(&f.bootstrap, false, |db| {
+            assert_eq!(services::projects::list(db)?[0].id, other);
+            let tasks = services::tasks::list(db)?;
+            for id in [&pending, &done, &canceled, &trashed] {
+                let task = tasks.iter().find(|task| &task.id == id).unwrap();
+                assert!(task.project_id.is_none());
+                assert!(task.deleted_at.is_some());
+            }
+            assert_eq!(tasks.iter().find(|t| t.id == done).unwrap().status, "done");
+            assert_eq!(
+                tasks.iter().find(|t| t.id == canceled).unwrap().status,
+                "canceled"
+            );
+            let untouched = tasks.iter().find(|t| t.id == unrelated).unwrap();
+            assert_eq!(untouched.project_id.as_deref(), Some(other.as_str()));
+            assert!(untouched.deleted_at.is_none());
+            let pending_reminders: i64 = db.query_row(
+                "SELECT COUNT(*) FROM reminders WHERE task_id=?1 AND state='pending'",
+                [&pending],
+                |r| r.get(0),
+            )?;
+            assert_eq!(pending_reminders, 0);
+            assert!(services::preferences::get(db, "capture_project")?
+                .unwrap_or_default()
+                .is_empty());
+            assert_eq!(
+                services::preferences::get(db, "capture_draft")?.as_deref(),
+                Some("保留草稿")
+            );
+            Ok(())
+        })
+        .unwrap();
+        execute(&f.bootstrap, true, |db| {
+            for task in [&pending, &trashed] {
+                services::tasks::restore(db, task, false)?;
+                let files = services::attachments::list(db, task)?;
+                assert_eq!(files.len(), 1);
+                assert_ne!(files[0].id, file.id);
+                assert_eq!(files[0].project_id, "__inbox__");
+                let path = services::files::resolve(db, "__inbox__", &files[0].id)?;
+                assert_eq!(fs::read(path).unwrap(), b"keep attachment");
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert!(execute(&f.bootstrap, true, |db| services::projects::delete(
+            db, &project
+        ))
+        .is_err());
+        assert!(execute(&f.bootstrap, true, |db| services::projects::delete(
+            db,
+            "__inbox__"
+        ))
+        .is_err());
+    }
+
+    #[test]
+    fn missing_attachment_aborts_project_deletion_without_changing_the_snapshot() {
+        let f = Fixture::new();
+        let project = f.project("缺失附件项目");
+        let task = f.task(Some(project.clone()));
+        let source = f.temp.path().join("缺失.txt");
+        fs::write(&source, b"missing").unwrap();
+        execute(&f.bootstrap, true, |db| {
+            services::attachments::import(db, &task, &source)?;
+            Ok(())
+        })
+        .unwrap();
+        fs::remove_file(f.root.join("缺失附件项目/Files/缺失.txt")).unwrap();
+        let before = documents::load(&f.root).unwrap();
+        assert!(execute(&f.bootstrap, true, |db| services::projects::delete(
+            db, &project
+        ))
+        .is_err());
+        assert_eq!(documents::load(&f.root).unwrap(), before);
+        execute(&f.bootstrap, false, |db| {
+            assert_eq!(services::projects::list(db)?[0].id, project);
+            let tasks = services::tasks::list(db)?;
+            assert_eq!(tasks[0].project_id.as_deref(), Some(project.as_str()));
+            assert!(tasks[0].deleted_at.is_none());
+            Ok(())
+        })
+        .unwrap();
+    }
+}

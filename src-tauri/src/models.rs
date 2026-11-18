@@ -85,6 +85,11 @@ pub struct Task {
     pub due_at: Option<String>,
     pub deleted_at: Option<String>,
     pub created_at: String,
+    pub completed_at: Option<String>,
+}
+
+fn default_task_priority() -> String {
+    "low".into()
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,6 +97,7 @@ pub struct Task {
 pub struct CreateTask {
     pub title: String,
     pub project_id: Option<String>,
+    #[serde(default = "default_task_priority")]
     pub priority: String,
     pub plan_date: Option<String>,
 }
@@ -121,6 +127,7 @@ pub struct ImportProgress {
 pub struct UpdateTask {
     pub title: String,
     pub project_id: Option<String>,
+    #[serde(default = "default_task_priority")]
     pub priority: String,
     pub plan_date: Option<String>,
     pub description: String,
@@ -144,6 +151,7 @@ pub struct Reminder {
 pub struct DesktopSettings {
     pub close_to_tray: bool,
     pub shortcut: String,
+    pub toggle_shortcut: String,
     pub middle_capture: bool,
     pub middle_hold_ms: u64,
     pub capture_trigger: String,
@@ -153,7 +161,18 @@ impl Default for DesktopSettings {
     fn default() -> Self {
         Self {
             close_to_tray: true,
-            shortcut: "CommandOrControl+Shift+Space".into(),
+            shortcut: if cfg!(target_os = "macos") {
+                "Control+Super+KeyD"
+            } else {
+                "Control+Alt+KeyD"
+            }
+            .into(),
+            toggle_shortcut: if cfg!(target_os = "macos") {
+                "Control+Super+KeyE"
+            } else {
+                "Control+Alt+KeyE"
+            }
+            .into(),
             middle_capture: false,
             middle_hold_ms: 650,
             capture_trigger: "MouseMiddle".into(),

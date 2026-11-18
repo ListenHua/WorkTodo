@@ -14,13 +14,43 @@ pub fn settings(db: &Connection) -> AppResult<DesktopSettings> {
         )
         .optional()?;
     match json {
-        Some(json) => serde_json::from_str(&json)
-            .map_err(|_| AppError::new("INVALID_SETTINGS", "桌面设置无效")),
+        Some(json) => parse_settings(
+            serde_json::from_str(&json)
+                .map_err(|_| AppError::new("INVALID_SETTINGS", "桌面设置无效"))?,
+        ),
         None => Ok(DesktopSettings::default()),
     }
 }
+pub fn parse_settings(mut value: serde_json::Value) -> AppResult<DesktopSettings> {
+    use tauri_plugin_global_shortcut::Shortcut;
+    let legacy = value.get("toggleShortcut").is_none();
+    let capture = value["captureTrigger"]
+        .as_str()
+        .and_then(|key| key.parse::<Shortcut>().ok());
+    let defaults = DesktopSettings::default();
+    // Upgrade the built-in default while preserving existing custom capture bindings.
+    if legacy
+        && value["shortcut"] == "CommandOrControl+Shift+Space"
+        && capture != defaults.shortcut.parse::<Shortcut>().ok()
+    {
+        value["shortcut"] = serde_json::Value::String(defaults.shortcut);
+    }
+    let mut settings: DesktopSettings = serde_json::from_value(value)
+        .map_err(|_| AppError::new("INVALID_SETTINGS", "桌面设置无效"))?;
+    // A newly introduced default must not invalidate a workspace that already uses that key.
+    if legacy {
+        let toggle = settings.toggle_shortcut.parse::<Shortcut>().ok();
+        if toggle.is_some()
+            && (toggle == settings.shortcut.parse::<Shortcut>().ok() || toggle == capture)
+        {
+            settings.toggle_shortcut.clear();
+        }
+    }
+    Ok(settings)
+}
 pub fn validate_settings(input: &DesktopSettings) -> AppResult<()> {
     use tauri_plugin_global_shortcut::Shortcut;
+    crate::shortcuts::bindings(input)?;
     let copy_shortcut: Shortcut = "CommandOrControl+C".parse().unwrap();
     if input
         .shortcut
@@ -75,14 +105,17 @@ pub fn validate_settings(input: &DesktopSettings) -> AppResult<()> {
                 "采集快捷键需包含 Ctrl、Alt、Shift 或 Command/Win，或使用 F1–F20",
             ));
         }
-        if input
-            .shortcut
-            .parse::<Shortcut>()
-            .is_ok_and(|quick| quick == shortcut)
+        if [&input.shortcut, &input.toggle_shortcut]
+            .iter()
+            .any(|value| {
+                value
+                    .parse::<Shortcut>()
+                    .is_ok_and(|global| global == shortcut)
+            })
         {
             return Err(AppError::new(
                 "SHORTCUT_CONFLICT",
-                "采集快捷键不能与快速添加快捷键相同",
+                "采集快捷键不能与快捷添加待办或显示/隐藏窗口快捷键相同",
             ));
         }
     }
@@ -160,6 +193,22 @@ pub fn action(db: &Connection, id: &str, action: &str) -> AppResult<()> {
                 params![id, Utc::now().to_rfc3339()],
             )?;
         }
+        "retry" => {
+            let available: bool = db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM reminders r JOIN tasks t ON t.id=r.task_id LEFT JOIN projects p ON p.id=t.project_id WHERE r.id=?1 AND t.deleted_at IS NULL AND t.status IN ('todo','doing') AND (t.project_id IS NULL OR p.status='active'))",
+                [id], |row| row.get(0),
+            )?;
+            if !available {
+                return Err(AppError::new(
+                    "TASK_UNAVAILABLE",
+                    "只有未完成待办可以再次提醒",
+                ));
+            }
+            db.execute(
+                "UPDATE reminders SET state='pending',read_at=NULL,sent_at=NULL WHERE id=?1",
+                [id],
+            )?;
+        }
         "snooze" => {
             let task: String =
                 db.query_row("SELECT task_id FROM reminders WHERE id=?1", [id], |r| {
@@ -204,6 +253,89 @@ pub fn due(db: &Connection, now: &str) -> AppResult<Vec<(i32, Reminder)>> {
 #[cfg(test)]
 mod capture_settings_tests {
     use super::*;
+    #[test]
+    fn legacy_defaults_upgrade_but_custom_disabled_and_explicit_bindings_are_retained() {
+        let defaults = DesktopSettings::default();
+        let old =
+            parse_settings(serde_json::json!({"shortcut":"CommandOrControl+Shift+Space"})).unwrap();
+        assert_eq!(old.shortcut, defaults.shortcut);
+        assert_eq!(old.toggle_shortcut, defaults.toggle_shortcut);
+        for value in ["Alt+Shift+F8", ""] {
+            let loaded = parse_settings(serde_json::json!({"shortcut":value})).unwrap();
+            assert_eq!(loaded.shortcut, value);
+        }
+        let conflict =
+            parse_settings(serde_json::json!({"shortcut":defaults.toggle_shortcut})).unwrap();
+        assert_eq!(conflict.shortcut, defaults.toggle_shortcut);
+        assert!(conflict.toggle_shortcut.is_empty());
+        assert!(validate_settings(&conflict).is_ok());
+        let custom_capture = parse_settings(serde_json::json!({"shortcut":"CommandOrControl+Shift+Space", "captureTrigger":defaults.shortcut})).unwrap();
+        assert_eq!(custom_capture.shortcut, "CommandOrControl+Shift+Space");
+        assert!(validate_settings(&custom_capture).is_ok());
+        let explicit = parse_settings(
+            serde_json::json!({"shortcut":"CommandOrControl+Shift+Space", "toggleShortcut":""}),
+        )
+        .unwrap();
+        assert_eq!(explicit.shortcut, "CommandOrControl+Shift+Space");
+        assert_eq!(explicit.toggle_shortcut, "");
+    }
+    #[test]
+    fn global_shortcuts_survive_portable_round_trip_and_cache_rebuild() {
+        let directory = tempfile::tempdir().unwrap();
+        let bootstrap = directory.path().join("app.db");
+        crate::db::initialize(&bootstrap).unwrap();
+        let root = directory.path().join("workspace");
+        std::fs::create_dir(&root).unwrap();
+        crate::portable::location::select(&bootstrap, &root, |_| true)
+            .unwrap()
+            .unwrap();
+        let saved = DesktopSettings {
+            shortcut: "Control+Alt+Shift+KeyK".into(),
+            toggle_shortcut: "Control+Alt+Shift+KeyL".into(),
+            ..DesktopSettings::default()
+        };
+        crate::portable::execute(&bootstrap, true, |db| save_settings(db, &saved)).unwrap();
+        let config: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.join("config.json")).unwrap()).unwrap();
+        assert_eq!(
+            config["preferences"]["desktop"]["toggleShortcut"],
+            saved.toggle_shortcut
+        );
+        assert_eq!(config["preferences"]["capture"]["shortcut"], saved.shortcut);
+        let binding = crate::portable::binding(&bootstrap).unwrap().unwrap();
+        std::fs::remove_file(crate::portable::cache_path(&bootstrap, &binding)).unwrap();
+        crate::portable::execute(&bootstrap, false, |db| {
+            let loaded = settings(db)?;
+            assert_eq!(loaded.shortcut, saved.shortcut);
+            assert_eq!(loaded.toggle_shortcut, saved.toggle_shortcut);
+            Ok(())
+        })
+        .unwrap();
+        let invalid = DesktopSettings {
+            toggle_shortcut: "Alt+Control+Shift+K".into(),
+            ..saved.clone()
+        };
+        assert!(
+            crate::portable::execute(&bootstrap, true, |db| save_settings(db, &invalid)).is_err()
+        );
+        crate::portable::execute(&bootstrap, false, |db| {
+            assert_eq!(settings(db)?.toggle_shortcut, saved.toggle_shortcut);
+            Ok(())
+        })
+        .unwrap();
+        let disabled = DesktopSettings {
+            shortcut: "".into(),
+            toggle_shortcut: "".into(),
+            ..saved
+        };
+        crate::portable::execute(&bootstrap, true, |db| save_settings(db, &disabled)).unwrap();
+        crate::portable::execute(&bootstrap, false, |db| {
+            assert!(settings(db)?.shortcut.is_empty());
+            assert!(settings(db)?.toggle_shortcut.is_empty());
+            Ok(())
+        })
+        .unwrap();
+    }
     #[test]
     fn legacy_settings_default_to_middle_and_custom_binding_survives_reopen() {
         let dir = tempfile::tempdir().unwrap();
@@ -280,5 +412,44 @@ mod capture_settings_tests {
             };
             assert!(validate_settings(&settings).is_ok(), "{trigger}");
         }
+    }
+}
+
+#[cfg(test)]
+mod delivery_tests {
+    use super::*;
+    use crate::{db, models::CreateTask, services::tasks};
+    #[test]
+    fn retry_requeues_active_tasks_and_cannot_revive_completed_or_deleted_tasks() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("app.db");
+        db::initialize(&path).unwrap();
+        let db = db::connect(&path).unwrap();
+        let task = tasks::create(
+            &db,
+            CreateTask {
+                title: "重试提醒".into(),
+                project_id: None,
+                priority: "low".into(),
+                plan_date: None,
+            },
+        )
+        .unwrap();
+        schedule(&db, &task.id, Some("2099-01-01T10:00:00Z")).unwrap();
+        let reminder = list(&db).unwrap().remove(0);
+        db.execute("UPDATE reminders SET state='sent',sent_at='2026-11-18T00:00:00Z',read_at='2026-11-18T00:00:00Z',remind_at='2026-11-01T00:00:00Z' WHERE id=?1", [&reminder.id]).unwrap();
+        assert!(due(&db, &Utc::now().to_rfc3339()).unwrap().is_empty());
+        action(&db, &reminder.id, "retry").unwrap();
+        let ready = due(&db, &Utc::now().to_rfc3339()).unwrap();
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].1.id, reminder.id);
+        assert!(list(&db).unwrap()[0].read_at.is_none());
+        tasks::set_completed(&db, &task.id, true).unwrap();
+        assert!(due(&db, &Utc::now().to_rfc3339()).unwrap().is_empty());
+        assert!(action(&db, &reminder.id, "retry").is_err());
+        tasks::set_completed(&db, &task.id, false).unwrap();
+        tasks::trash(&db, &task.id, false).unwrap();
+        assert!(action(&db, &reminder.id, "retry").is_err());
+        assert!(action(&db, "unknown-reminder", "retry").is_err());
     }
 }

@@ -6,8 +6,11 @@ mod menu;
 mod middle_capture;
 mod models;
 mod native_locale;
+mod notifications;
 mod portable;
 mod services;
+mod shortcuts;
+mod tray;
 
 use tauri::Manager;
 
@@ -25,6 +28,17 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::Builder::new().build())
         .manage(desktop::DesktopState::default())
         .on_window_event(|window, event| {
+            if window.label() == "main"
+                && matches!(
+                    event,
+                    tauri::WindowEvent::Focused(false) | tauri::WindowEvent::Destroyed
+                )
+            {
+                window
+                    .state::<desktop::DesktopState>()
+                    .recording_shortcut
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "quick" {
                     api.prevent_close();
@@ -67,11 +81,16 @@ pub fn run() {
             commands::preference_set,
             commands::local_data_paths,
             commands::desktop_status,
+            tray::tray_take_actions,
+            shortcuts::shortcut_recording,
             commands::desktop_save,
             commands::middle_permission,
             commands::middle_retry,
             commands::desktop_autostart,
             commands::notification_test,
+            commands::notification_status,
+            commands::notification_request,
+            commands::notification_settings,
             commands::reminders_list,
             commands::reminders_schedule,
             commands::reminders_action,
@@ -85,6 +104,7 @@ pub fn run() {
             commands::tasks_update,
             commands::tasks_trash,
             commands::projects_update,
+            commands::projects_delete,
             commands::projects_open_link,
             commands::projects_extract_link_icon,
             commands::projects_set_status,

@@ -517,7 +517,8 @@ pub fn notification_delivery(bootstrap: &Path, id: &str, state: Option<&str>) ->
         )?;
         return Ok(true);
     }
-    Ok(!file.exists() || io::read(&file)?["state"] == "failed")
+    Ok(!file.exists()
+        || crate::notifications::can_retry_delivery(&io::read(&file)?, chrono::Utc::now()))
 }
 
 pub fn info(bootstrap: &Path) -> AppResult<serde_json::Value> {
@@ -672,7 +673,7 @@ pub fn save_capture(
         crate::models::CreateTask {
             title,
             project_id,
-            priority: "none".into(),
+            priority: "low".into(),
             plan_date: None,
         },
     )?;

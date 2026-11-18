@@ -22,7 +22,7 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" vi
 </svg>
 `
 // Keep the background and glyph together, with 50 px of transparent space on
-// every side. Only the macOS ICNS uses this inset; the tray, favicon and Windows
+// every side. Only the macOS ICNS uses this inset; the favicon and Windows
 // resources retain their existing size.
 const macosSvg = svg.replace(
   artwork,
@@ -54,3 +54,5 @@ try {
 } finally {
   await rm(output, { recursive: true, force: true })
 }
+
+await import('./generate-tray-icon.mjs')

@@ -43,7 +43,9 @@ html5ever = "0.39"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSObject", "NSString", "NSUserDefaults", "NSLocale"] }
+block2 = "0.6"
+objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNUserNotificationCenter", "UNNotificationSettings", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger", "UNNotification", "UNNotificationResponse", "UNNotificationSound"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSObject", "NSString", "NSUserDefaults", "NSLocale", "NSProcessInfo", "NSBundle"] }
 core-graphics = "0.25"
 core-foundation = "0.10"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard"] }

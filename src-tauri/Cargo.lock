@@ -2774,6 +2774,8 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9df9128cbbfef73cda168416ccf7f837b62737d748333bfe9ab71c245d76613e"
 dependencies = [
+ "bitflags 2.13.2",
+ "block2",
  "objc2",
  "objc2-foundation",
 ]
@@ -3193,6 +3195,7 @@ name = "project-manage"
 version = "0.0.1"
 dependencies = [
  "base64 0.21.7",
+ "block2",
  "chrono",
  "core-foundation 0.10.1",
  "core-graphics 0.25.0",
@@ -3202,6 +3205,7 @@ dependencies = [
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
+ "objc2-user-notifications",
  "rdev",
  "rusqlite",
  "serde",

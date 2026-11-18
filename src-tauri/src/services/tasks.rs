@@ -6,20 +6,30 @@ use chrono::{NaiveDate, Utc};
 use rusqlite::{params, Connection};
 use uuid::Uuid;
 
+// Older workspaces used "none"; read and persist those tasks as low priority.
+pub fn normalize_priority(priority: &str) -> &str {
+    if priority == "none" {
+        "low"
+    } else {
+        priority
+    }
+}
+
 pub fn list(connection: &Connection) -> AppResult<Vec<Task>> {
-    let mut statement = connection.prepare("SELECT id,project_id,title,status,priority,plan_date,created_at,description,due_at,deleted_at FROM tasks ORDER BY created_at DESC,id")?;
+    let mut statement = connection.prepare("SELECT id,project_id,title,status,priority,plan_date,created_at,description,due_at,deleted_at,completed_at FROM tasks ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,created_at DESC,id")?;
     let rows = statement.query_map([], |row| {
         Ok(Task {
             id: row.get(0)?,
             project_id: row.get(1)?,
             title: row.get(2)?,
             status: row.get(3)?,
-            priority: row.get(4)?,
+            priority: normalize_priority(&row.get::<_, String>(4)?).into(),
             plan_date: row.get(5)?,
             created_at: row.get(6)?,
             description: row.get(7)?,
             due_at: row.get(8)?,
             deleted_at: row.get(9)?,
+            completed_at: row.get(10)?,
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -53,11 +63,12 @@ pub fn create(connection: &Connection, input: CreateTask) -> AppResult<Task> {
         project_id: input.project_id,
         title,
         status: "todo".into(),
-        priority: input.priority,
+        priority: normalize_priority(&input.priority).into(),
         plan_date: input.plan_date,
         description: String::new(),
         due_at: None,
         deleted_at: None,
+        completed_at: None,
         created_at: Utc::now().to_rfc3339(),
     };
     connection.execute("INSERT INTO tasks(id,project_id,title,priority,plan_date,created_at) VALUES(?1,?2,?3,?4,?5,?6)", params![task.id,task.project_id,task.title,task.priority,task.plan_date,task.created_at])?;
@@ -74,7 +85,7 @@ pub fn set_completed(connection: &Connection, id: &str, completed: bool) -> AppR
     let transaction = connection.unchecked_transaction()?;
     let status = if completed { "done" } else { "todo" };
     let completed_at = completed.then(|| Utc::now().to_rfc3339());
-    let changed = transaction.execute("UPDATE tasks SET status=?2,completed_at=?3 WHERE id=?1 AND deleted_at IS NULL AND status IN ('todo','doing','done')", params![id,status,completed_at])?;
+    let changed = transaction.execute("UPDATE tasks SET status=?2,completed_at=CASE WHEN ?2='done' AND status='done' THEN completed_at ELSE ?3 END WHERE id=?1 AND deleted_at IS NULL AND status IN ('todo','doing','done')", params![id,status,completed_at])?;
     if changed == 0 {
         return Err(AppError::new("TASK_NOT_FOUND", "待办不存在或无法修改"));
     }
@@ -112,9 +123,18 @@ pub fn update(connection: &mut Connection, id: &str, input: UpdateTask) -> AppRe
     } else {
         Vec::new()
     };
+    let completed_at = if input.status == "done" {
+        if old.status == "done" {
+            old.completed_at.clone()
+        } else {
+            Some(Utc::now().to_rfc3339())
+        }
+    } else {
+        None
+    };
     let transaction = connection.transaction()?;
     transaction.execute("UPDATE tasks SET title=?2,project_id=?3,priority=?4,plan_date=?5,description=?6,due_at=?7,status=?8,updated_at=?9,completed_at=?10 WHERE id=?1",
-        params![id,title,input.project_id,input.priority,input.plan_date,input.description,input.due_at,input.status,Utc::now().to_rfc3339(),(input.status=="done").then(|| Utc::now().to_rfc3339())])?;
+        params![id,title,input.project_id,normalize_priority(&input.priority),input.plan_date,input.description,input.due_at,input.status,Utc::now().to_rfc3339(),completed_at])?;
     if old.project_id != input.project_id {
         transaction.execute("DELETE FROM task_files WHERE task_id=?1", [id])?;
         for file in copied {
@@ -271,4 +291,158 @@ pub fn restore(connection: &mut Connection, id: &str, to_inbox: bool) -> AppResu
     }
     transaction.commit()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{db, portable};
+
+    #[test]
+    fn completion_dates_are_exposed_and_preserved_until_reopened() {
+        let directory = tempfile::tempdir().unwrap();
+        let bootstrap = directory.path().join("app.db");
+        db::initialize(&bootstrap).unwrap();
+        let root = directory.path().join("workspace");
+        std::fs::create_dir(&root).unwrap();
+        portable::location::select(&bootstrap, &root, |_| true)
+            .unwrap()
+            .unwrap();
+        let input = |status: &str| UpdateTask {
+            title: "完成日期".into(),
+            project_id: None,
+            priority: "none".into(),
+            plan_date: None,
+            description: "补充说明".into(),
+            due_at: None,
+            status: status.into(),
+            reminder_at: None,
+        };
+        let task =
+            portable::execute(&bootstrap, true, |db| create_full(db, input("todo"))).unwrap();
+        assert!(task.completed_at.is_none());
+        let historical = "2026-10-01T08:30:00+00:00";
+        portable::execute(&bootstrap, true, |db| {
+            set_completed(db, &task.id, true)?;
+            assert!(list(db)?[0].completed_at.is_some());
+            db.execute(
+                "UPDATE tasks SET completed_at=?2 WHERE id=?1",
+                params![task.id, historical],
+            )?;
+            set_completed(db, &task.id, true)?;
+            let updated = update(db, &task.id, input("done"))?;
+            assert_eq!(updated.completed_at.as_deref(), Some(historical));
+            assert_eq!(
+                serde_json::to_value(&updated).unwrap()["completedAt"],
+                historical
+            );
+            Ok(())
+        })
+        .unwrap();
+        // Verify that the portable document round trip also retains the original date.
+        portable::execute(&bootstrap, false, |db| {
+            assert_eq!(list(db)?[0].completed_at.as_deref(), Some(historical));
+            Ok(())
+        })
+        .unwrap();
+        portable::execute(&bootstrap, true, |db| {
+            db.execute("UPDATE tasks SET completed_at=NULL WHERE id=?1", [&task.id])?;
+            set_completed(db, &task.id, true)?;
+            assert!(update(db, &task.id, input("done"))?.completed_at.is_none());
+            set_completed(db, &task.id, false)?;
+            assert!(list(db)?[0].completed_at.is_none());
+            assert!(update(db, &task.id, input("done"))?.completed_at.is_some());
+            assert!(create_full(db, input("done"))?.completed_at.is_some());
+            Ok(())
+        })
+        .unwrap();
+    }
+    #[test]
+    fn priorities_default_to_low_and_legacy_documents_round_trip_as_low() {
+        let directory = tempfile::tempdir().unwrap();
+        let bootstrap = directory.path().join("app.db");
+        db::initialize(&bootstrap).unwrap();
+        let root = directory.path().join("workspace");
+        std::fs::create_dir(&root).unwrap();
+        portable::location::select(&bootstrap, &root, |_| true)
+            .unwrap()
+            .unwrap();
+        let input = |priority: &str| CreateTask {
+            title: priority.into(),
+            project_id: None,
+            priority: priority.into(),
+            plan_date: None,
+        };
+        let legacy = portable::execute(&bootstrap, true, |db| {
+            let task = create(db, input("none"))?;
+            assert_eq!(task.priority, "low");
+            let default: CreateTask = serde_json::from_value(serde_json::json!({"title":"默认低优先级"})).unwrap();
+            assert_eq!(create(db, default)?.priority, "low");
+            create(db, input("medium"))?;
+            create(db, input("high"))?;
+            assert_eq!(list(db)?.iter().map(|t| t.priority.as_str()).collect::<Vec<_>>(), vec!["high", "medium", "low", "low"]);
+            let mut edit: UpdateTask = serde_json::from_value(serde_json::json!({"title":"编辑后默认低优先级", "description":"", "status":"todo"})).unwrap();
+            assert_eq!(edit.priority, "low");
+            edit.priority = "none".into();
+            assert_eq!(update(db, &task.id, edit)?.priority, "low");
+            assert!(create(db, input("urgent")).is_err());
+            Ok(task)
+        }).unwrap();
+        // Simulate a directory created by an older app, including a missing priority.
+        let document = root.join("todo.json");
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&document).unwrap()).unwrap();
+        for task in value["tasks"].as_array_mut().unwrap() {
+            if task["id"] == legacy.id {
+                task["priority"] = serde_json::json!("none");
+            } else if task["priority"] == "low" {
+                task.as_object_mut().unwrap().remove("priority");
+            }
+        }
+        std::fs::write(&document, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+        // Keep the old workspace's document manifest consistent with its contents.
+        let config_path = root.join("config.json");
+        let mut config = portable::io::read(&config_path).unwrap();
+        for entry in config["snapshot"]["documents"].as_array_mut().unwrap() {
+            if entry["path"] == "todo.json" {
+                entry["sha256"] = serde_json::json!(portable::io::hash(&document).unwrap());
+            }
+        }
+        portable::io::write(&config_path, &config).unwrap();
+        portable::execute(&bootstrap, false, |db| {
+            assert_eq!(
+                list(db)?
+                    .iter()
+                    .find(|t| t.id == legacy.id)
+                    .unwrap()
+                    .priority,
+                "low"
+            );
+            let count: i64 = db.query_row(
+                "SELECT COUNT(*) FROM tasks WHERE priority='none'",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(count, 0);
+            Ok(())
+        })
+        .unwrap();
+        portable::execute(&bootstrap, true, |db| {
+            let mut edit: UpdateTask = serde_json::from_value(
+                serde_json::json!({"title":"保存旧待办", "description":"", "status":"todo"}),
+            )
+            .unwrap();
+            edit.priority = "none".into();
+            update(db, &legacy.id, edit)?;
+            Ok(())
+        })
+        .unwrap();
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&document).unwrap()).unwrap();
+        assert!(saved["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|t| ["low", "medium", "high"].contains(&t["priority"].as_str().unwrap())));
+    }
 }

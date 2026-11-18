@@ -13,7 +13,7 @@ use std::{
     },
 };
 use tauri::ipc::{Channel, Response};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_opener::OpenerExt;
 
@@ -392,6 +392,13 @@ pub async fn projects_update(
     .await
 }
 #[tauri::command]
+pub async fn projects_delete(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    blocking(state.db_path.clone(), move |db| {
+        services::projects::delete(db, &id)
+    })
+    .await
+}
+#[tauri::command]
 pub async fn projects_set_status(
     state: State<'_, AppState>,
     id: String,
@@ -608,51 +615,15 @@ pub async fn desktop_save(
     input: DesktopSettings,
 ) -> AppResult<()> {
     use tauri::Manager;
-    use tauri_plugin_global_shortcut::GlobalShortcutExt;
     let rollback_app = app.clone();
     let result = blocking(state.db_path.clone(), move |db| {
-        let previous = services::reminders::settings(db)?;
-        use tauri_plugin_global_shortcut::Shortcut;
         services::reminders::validate_settings(&input)?;
-        let next_quick = if input.shortcut.is_empty() {
-            None
-        } else {
-            Some(
-                input
-                    .shortcut
-                    .parse::<Shortcut>()
-                    .map_err(|_| AppError::new("SHORTCUT_CONFLICT", "快速添加快捷键无效"))?,
-            )
-        };
-        let old_quick = previous.shortcut.parse::<Shortcut>().ok();
-        let registered_quick = next_quick.is_some_and(|next| {
-            old_quick != Some(next) || !app.global_shortcut().is_registered(next)
-        });
-        if registered_quick {
-            crate::desktop::register_shortcut(&app, &input.shortcut)?;
-        }
-        let capture_change = match crate::desktop::prepare_capture_shortcut(&app, &input) {
-            Ok(change) => change,
-            Err(error) => {
-                if registered_quick {
-                    let _ = app.global_shortcut().unregister(next_quick.unwrap());
-                }
-                return Err(error);
-            }
-        };
+        let change = crate::shortcuts::prepare(&app, &input)?;
         if let Err(error) = services::reminders::save_settings(db, &input) {
-            capture_change.rollback(&app);
-            if registered_quick {
-                let _ = app.global_shortcut().unregister(next_quick.unwrap());
-            }
+            change.rollback(&app);
             return Err(error);
         }
-        capture_change.commit(&app);
-        if old_quick != next_quick {
-            if let Some(old) = old_quick {
-                let _ = app.global_shortcut().unregister(old);
-            }
-        }
+        change.commit(&app);
         *app.state::<crate::desktop::DesktopState>()
             .shortcut_error
             .lock()
@@ -699,17 +670,69 @@ pub async fn desktop_autostart(
 }
 
 #[tauri::command]
-pub fn notification_test(app: AppHandle) -> AppResult<()> {
-    use tauri_plugin_notification::NotificationExt;
-    app.notification()
-        .request_permission()
-        .map_err(|_| AppError::new("NOTIFICATION_ERROR", "无法请求通知权限"))?;
-    app.notification()
-        .builder()
-        .title("项目工作台")
-        .body("通知测试成功")
-        .show()
-        .map_err(|_| AppError::new("NOTIFICATION_ERROR", "无法提交系统通知，请检查系统通知设置"))
+pub async fn notification_test(app: AppHandle) -> AppResult<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::notifications::permission(&app, true)?;
+        crate::notifications::send(
+            &app,
+            "project-manage-test",
+            -1,
+            "项目工作台",
+            "系统通知已连接",
+            None,
+        )
+    })
+    .await
+    .map_err(|_| AppError::new("WORKER_ERROR", "通知测试中断"))?
+}
+#[tauri::command]
+pub async fn notification_status(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<crate::notifications::NotificationStatus> {
+    let enabled = blocking_read(state.db_path.clone(), |db| {
+        Ok(services::reminders::settings(db)?.notifications)
+    })
+    .await?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let permission = crate::notifications::permission(&app, false)?;
+        let error = app
+            .state::<crate::notifications::NotificationState>()
+            .0
+            .lock()
+            .map(|value| value.clone())
+            .unwrap_or_default();
+        Ok(crate::notifications::NotificationStatus {
+            permission,
+            enabled,
+            error,
+        })
+    })
+    .await
+    .map_err(|_| AppError::new("WORKER_ERROR", "无法读取通知状态"))?
+}
+#[tauri::command]
+pub async fn notification_request(app: AppHandle) -> AppResult<String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let permission = crate::notifications::permission(&app, true)?;
+        if permission == "granted" {
+            if let Ok(mut error) = app
+                .state::<crate::notifications::NotificationState>()
+                .0
+                .lock()
+            {
+                error.clear();
+            }
+        }
+        let _ = tauri::Emitter::emit(&app, "reminders-changed", ());
+        Ok(permission)
+    })
+    .await
+    .map_err(|_| AppError::new("WORKER_ERROR", "通知授权中断"))?
+}
+#[tauri::command]
+pub fn notification_settings(app: AppHandle) -> AppResult<()> {
+    crate::notifications::open_settings(&app)
 }
 #[tauri::command]
 pub async fn reminders_list(state: State<'_, AppState>) -> AppResult<Vec<Reminder>> {
@@ -732,8 +755,13 @@ pub async fn reminders_action(
     id: String,
     action: String,
 ) -> AppResult<()> {
+    let path = state.db_path.clone();
     blocking(state.db_path.clone(), move |db| {
-        services::reminders::action(db, &id, &action)
+        services::reminders::action(db, &id, &action)?;
+        if action == "retry" {
+            crate::portable::notification_delivery(&path, &id, Some("failed"))?;
+        }
+        Ok(())
     })
     .await
 }
