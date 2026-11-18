@@ -144,9 +144,6 @@ function recordShortcut(event: KeyboardEvent) {
   runtime.value.settings.captureTrigger = shortcut
   recording.value = false
 }
-const needsInputMonitoring = computed(
-  () => !usesKeyboard.value && !runtime.value?.inputMonitoringPermission,
-)
 const middleState = computed(() => {
   if (!workspace.desktop) return '请在桌面端使用快捷采集'
   if (!runtime.value?.settings.middleCapture) return '未开启'
@@ -155,7 +152,7 @@ const middleState = computed(() => {
     runtime.value.settings.middleHoldMs !== appliedCapture.value.holdMs
   )
     return '采集设置已修改，保存后生效'
-  if (!runtime.value.middlePermission || needsInputMonitoring.value) return '等待系统授权'
+  if (!runtime.value.middlePermission) return '等待系统授权'
   return runtime.value.middleListening
     ? usesKeyboard.value
       ? '正在监听快捷键'
@@ -492,11 +489,10 @@ onUnmounted(() => {
         </div>
         <p class="setting-help" role="status">{{ middleState }}</p>
         <template v-if="workspace.desktop && runtime.settings.middleCapture">
-          <p
-            v-if="runtime.isMacos && (!runtime.middlePermission || needsInputMonitoring)"
-            class="form-error"
-          >
-            请在系统隐私设置中允许当前运行的“WorkTodo”。授权后返回此处重新检测；如果系统要求退出应用，请从托盘退出后重新打开。
+          <p v-if="runtime.isMacos && !runtime.middlePermission" class="form-error">
+            请在“系统设置 → 隐私与安全性 →
+            辅助功能”中允许“WorkTodo”。列表中没有时，点击“+”添加“应用程序”中的
+            WorkTodo。授权后返回此处重新检测；如果系统要求退出应用，请从托盘退出后重新打开。
           </p>
           <div class="dialog-footer">
             <NButton
@@ -504,12 +500,6 @@ onUnmounted(() => {
               :disabled="busy"
               @click="run(() => desktopApi.middlePermission('accessibility'), undefined, false)"
               >允许辅助功能</NButton
-            >
-            <NButton
-              v-if="runtime.isMacos && needsInputMonitoring"
-              :disabled="busy"
-              @click="run(() => desktopApi.middlePermission('input-monitoring'), undefined, false)"
-              >允许输入监控</NButton
             >
             <NButton :disabled="busy" @click="refreshMiddle(true)">重新检测</NButton>
           </div>

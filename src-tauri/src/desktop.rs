@@ -273,13 +273,9 @@ pub fn start_middle(app: &AppHandle, settings: &DesktopSettings) {
     if !config.enabled {
         return;
     }
-    if !middle_capture::permissions().ready_for(&config.trigger) {
+    if !middle_capture::permissions().ready() {
         *state.middle_error.lock().unwrap() =
-            if crate::middle_capture::mouse_button(&config.trigger).is_some() {
-                "请先允许辅助功能和输入监控权限，再点击重新检测".into()
-            } else {
-                "请先允许辅助功能权限，再点击重新检测".into()
-            };
+            "请先允许 WorkTodo 的辅助功能权限，再点击重新检测".into();
         return;
     }
     if crate::middle_capture::mouse_button(&config.trigger).is_none() {
@@ -382,8 +378,7 @@ fn collect_capture(app: AppHandle, epoch: u64, keyboard: bool) {
             if !valid() {
                 return Err("采集设置已变更".into());
             }
-            let trigger = state.capture_config.lock().unwrap().trigger.clone();
-            if !middle_capture::permissions().ready_for(&trigger) {
+            if !middle_capture::permissions().ready() {
                 return Err("采集权限不可用，请在设置中检查系统授权".into());
             }
             let revision = middle_capture::clipboard_revision();

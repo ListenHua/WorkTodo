@@ -89,12 +89,10 @@ pub struct Permissions {
     pub input_monitoring: bool,
 }
 impl Permissions {
-    pub fn ready_for(self, trigger: &str) -> bool {
-        self.accessibility && (mouse_button(trigger).is_none() || self.input_monitoring)
-    }
-    #[cfg(target_os = "macos")]
     pub fn ready(self) -> bool {
-        self.accessibility && self.input_monitoring
+        // Accessibility permits listen-only event taps as well as posting Cmd+C.
+        // Do not require a separate Input Monitoring grant for mouse capture.
+        self.accessibility
     }
 }
 
@@ -241,7 +239,7 @@ pub fn listen(
             CallbackResult::Keep
         },
     )
-    .map_err(|_| "无法启动鼠标监听，请检查输入监控权限后重新检测".to_string())?;
+    .map_err(|_| "无法启动鼠标监听，请检查 WorkTodo 的辅助功能授权后重新检测".to_string())?;
     let source = tap
         .mach_port()
         .create_runloop_source(0)
@@ -259,7 +257,7 @@ pub fn listen(
             )
         };
         if !permissions().ready() {
-            return Err("鼠标采集权限已变更，请允许辅助功能和输入监控后重新检测".into());
+            return Err("鼠标采集权限已变更，请允许 WorkTodo 的辅助功能权限后重新检测".into());
         }
         if interrupted.swap(false, Ordering::SeqCst) {
             tap.enable();
@@ -387,26 +385,20 @@ mod tests {
         assert!(!hold.release(start + std::time::Duration::from_millis(900)));
     }
     #[test]
-    fn keyboard_capture_only_requires_accessibility_while_middle_also_needs_input_monitoring() {
-        let permissions = Permissions {
-            accessibility: true,
-            input_monitoring: false,
-        };
-        assert!(permissions.ready_for("Alt+Shift+D"));
-        for trigger in [
-            "MouseMiddle",
-            "MouseRight",
-            "MouseBack",
-            "MouseForward",
-            "MouseButton6",
-        ] {
-            assert!(!permissions.ready_for(trigger));
+    fn capture_accepts_accessibility_without_separate_input_monitoring_permission() {
+        for input_monitoring in [false, true] {
+            assert!(Permissions {
+                accessibility: true,
+                input_monitoring,
+            }
+            .ready());
+            // Input Monitoring alone cannot authorize posting Cmd+C.
+            assert!(!Permissions {
+                accessibility: false,
+                input_monitoring,
+            }
+            .ready());
         }
-        assert!(!Permissions {
-            accessibility: false,
-            input_monitoring: true
-        }
-        .ready_for("F8"));
     }
     #[test]
     fn mouse_events_distinguish_primary_middle_and_side_buttons() {
