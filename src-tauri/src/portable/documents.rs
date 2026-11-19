@@ -21,7 +21,7 @@ pub fn items<'a>(v: &'a Value, key: &str) -> AppResult<&'a Vec<Value>> {
         .and_then(Value::as_array)
         .ok_or_else(|| io::invalid(&format!("配置列表无效：{key}")))
 }
-fn check(v: &Value, kind: &str, workspace: Option<&str>) -> AppResult<()> {
+pub(super) fn check(v: &Value, kind: &str, workspace: Option<&str>) -> AppResult<()> {
     if v["formatVersion"] != 1 {
         return Err(crate::error::AppError::new(
             "FORMAT_UNSUPPORTED",
@@ -112,7 +112,7 @@ pub fn cache_key(documents: &Documents) -> AppResult<String> {
     Ok(io::digest(&bytes))
 }
 
-fn rows(db: &Connection, sql: &str, arg: Option<&str>) -> AppResult<Vec<Value>> {
+pub(super) fn rows(db: &Connection, sql: &str, arg: Option<&str>) -> AppResult<Vec<Value>> {
     let mut stmt = db.prepare(sql)?;
     let names = stmt
         .column_names()
@@ -545,7 +545,7 @@ fn retain(old: Option<&Value>, new: Value) -> Value {
 fn previous_item<'a>(old: Option<&'a Value>, field: &str, id: &Value) -> Option<&'a Value> {
     old?.get(field)?.as_array()?.iter().find(|v| v["id"] == *id)
 }
-fn envelope(old: Option<&Value>, mut value: Value) -> Value {
+pub(super) fn envelope(old: Option<&Value>, mut value: Value) -> Value {
     if let Some(old) = old {
         value["revision"] = old["revision"].clone();
         value["updatedAt"] = old["updatedAt"].clone();

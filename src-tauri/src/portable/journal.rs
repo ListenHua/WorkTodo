@@ -30,6 +30,11 @@ enum Action {
         path: String,
         identity: Option<String>,
     },
+    DeleteProjectDirectory {
+        path: String,
+        project_id: String,
+        identity: String,
+    },
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -151,6 +156,28 @@ pub fn directory(target: &Path) -> AppResult<()> {
         Ok(())
     })
 }
+/// Directory removal is deferred until the project registration is durably removed.
+pub fn delete_project_directory(root: &Path, directory: &str, project_id: &str) -> AppResult<()> {
+    if directory.contains('/') || crate::services::projects::normalized_name(directory).is_err() {
+        return Err(io::invalid("项目目录无效，未删除文件"));
+    }
+    let target = io::path(root, directory)?;
+    match fs::symlink_metadata(&target) {
+        Ok(metadata) if metadata.is_dir() && !crate::services::files::is_link(&metadata) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+        _ => return Err(io::invalid("项目路径不是文件夹，未删除文件")),
+    }
+    let identity = io::fingerprint(&target)?;
+    record(|_| {
+        Ok(Action::DeleteProjectDirectory {
+            path: directory.to_owned(),
+            project_id: project_id.to_owned(),
+            identity,
+        })
+    })
+}
+
 pub fn detach() {
     ACTIVE.with(|slot| *slot.borrow_mut() = None);
 }
@@ -311,6 +338,48 @@ pub fn recover(root: &Path) -> AppResult<()> {
                 fs::remove_file(file)?;
             }
         }
+        // Remove only the exact, unregistered project directory explicitly selected
+        // by the user. Recovery retries interrupted removals without following links.
+        for action in &journal.actions {
+            if let Action::DeleteProjectDirectory {
+                path,
+                project_id,
+                identity,
+            } = action
+            {
+                if path.contains('/')
+                    || crate::services::projects::normalized_name(path).is_err()
+                    || !super::documents::items(
+                        previous_root.ok_or_else(|| io::invalid("缺少删除前的项目记录"))?,
+                        "projects",
+                    )?
+                    .iter()
+                    .any(|project| project["id"] == *project_id && project["directory"] == *path)
+                    || super::documents::items(next_root, "projects")?
+                        .iter()
+                        .any(|project| {
+                            project["id"] == *project_id || project["directory"] == *path
+                        })
+                {
+                    return Err(io::invalid("删除目标与项目记录不一致，未删除文件"));
+                }
+                let target = io::path(root, path)?;
+                match fs::symlink_metadata(&target) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(error) => return Err(error.into()),
+                    Ok(metadata)
+                        if !metadata.is_dir() || crate::services::files::is_link(&metadata) =>
+                    {
+                        return Err(io::invalid("项目文件夹已被替换，未删除文件"));
+                    }
+                    _ => {}
+                }
+                if io::fingerprint(&target)? != *identity {
+                    return Err(io::invalid("项目文件夹已被替换，未删除文件"));
+                }
+                fs::remove_dir_all(target)?;
+            }
+        }
         // Drop only unchanged resources explicitly retired by a committed draft operation.
         // External replacements remain intact even when they are no longer referenced.
         for action in &journal.actions {
@@ -367,7 +436,7 @@ pub fn recover(root: &Path) -> AppResult<()> {
                         fs::remove_file(target)?;
                     }
                 }
-                Action::Retire { .. } => {}
+                Action::Retire { .. } | Action::DeleteProjectDirectory { .. } => {}
                 Action::Directory { path, identity } => {
                     let target = io::path(root, path)?;
                     if target.is_dir()

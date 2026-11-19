@@ -118,8 +118,8 @@ pub fn show_capture(app: &AppHandle) -> AppResult<()> {
             WebviewWindowBuilder::new(app, "quick", WebviewUrl::App("index.html#/capture".into()));
         builder
             .title("快速添加")
-            .inner_size(520., 570.)
-            .min_inner_size(440., 480.)
+            .inner_size(560., 720.)
+            .min_inner_size(440., 520.)
             .center()
             .resizable(true)
             .build()

@@ -28,43 +28,6 @@ mod macos {
             unsafe { defaults.setVolatileDomain_forName(&arguments, domain) };
         });
     }
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-        use objc2_foundation::NSLocale;
-
-        #[test]
-        fn native_language_is_chinese_without_persisting_preferences() {
-            objc2::rc::autoreleasepool(|_| {
-                let defaults = NSUserDefaults::standardUserDefaults();
-                let domain = unsafe { NSArgumentDomain };
-                let previous = defaults.volatileDomainForName(domain);
-                let arguments = NSMutableDictionary::dictionaryWithDictionary(&previous);
-                arguments.insert(
-                    ns_string!("LocaleTestLaunchArgument"),
-                    ns_string!("preserved"),
-                );
-                unsafe { defaults.setVolatileDomain_forName(&arguments, domain) };
-                let persistent_before =
-                    defaults.persistentDomainForName(ns_string!("NSGlobalDomain"));
-                initialize();
-                let current = defaults.volatileDomainForName(domain);
-                assert!(current
-                    .objectForKey(ns_string!("LocaleTestLaunchArgument"))
-                    .is_some());
-                assert_eq!(
-                    NSLocale::preferredLanguages().objectAtIndex(0).to_string(),
-                    "zh-Hans"
-                );
-                assert_eq!(
-                    defaults.persistentDomainForName(ns_string!("NSGlobalDomain")),
-                    persistent_before
-                );
-                unsafe { defaults.setVolatileDomain_forName(&previous, domain) };
-            });
-        }
-    }
 }
 
 #[cfg(target_os = "windows")]

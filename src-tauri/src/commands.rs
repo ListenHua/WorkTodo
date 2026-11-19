@@ -437,11 +437,31 @@ pub async fn projects_update(
     .await
 }
 #[tauri::command]
-pub async fn projects_delete(state: State<'_, AppState>, id: String) -> AppResult<()> {
-    blocking(state.db_path.clone(), move |db| {
-        services::projects::delete(db, &id)
+pub async fn projects_delete(
+    state: State<'_, AppState>,
+    id: String,
+    delete_files: Option<bool>,
+) -> AppResult<()> {
+    let path = state.db_path.clone();
+    let expected = crate::portable::binding(&path)?.map(|binding| binding.id);
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = IO_LOCK
+            .lock()
+            .map_err(|_| AppError::new("WORKER_ERROR", "本地操作暂不可用，请重启应用"))?;
+        if crate::portable::binding(&path)?.map(|binding| binding.id) != expected {
+            return Err(AppError::new(
+                "WORKSPACE_CHANGED",
+                "工作目录已切换，请重新打开当前内容",
+            ));
+        }
+        if delete_files.unwrap_or(false) {
+            crate::portable::projects::delete_with_files(&path, &id, true)
+        } else {
+            crate::portable::projects::delete(&path, &id)
+        }
     })
     .await
+    .map_err(|_| AppError::new("WORKER_ERROR", "后台操作中断，请重试"))?
 }
 #[tauri::command]
 pub async fn projects_set_status(
@@ -845,11 +865,14 @@ pub fn capture_image(app: AppHandle) -> AppResult<Response> {
     Ok(Response::new(std::fs::read(file)?))
 }
 #[tauri::command]
+pub fn capture_show(app: AppHandle) -> AppResult<()> {
+    crate::desktop::show_capture(&app)
+}
+#[tauri::command]
 pub async fn capture_save(
     app: AppHandle,
     state: State<'_, AppState>,
-    text: String,
-    project_id: Option<String>,
+    input: UpdateTask,
     include_image: bool,
     request_id: String,
     binding_id: Option<String>,
@@ -863,7 +886,7 @@ pub async fn capture_save(
             .iter()
             .any(|task| task.id == request_id)
         {
-            return crate::portable::save_capture(db, &text, project_id, None, &request_id);
+            return crate::portable::save_capture_task(db, input, None, &request_id);
         }
         let image = if include_image {
             let state = action_app.state::<crate::desktop::DesktopState>();
@@ -872,7 +895,7 @@ pub async fn capture_save(
         } else {
             None
         };
-        crate::portable::save_capture(db, &text, project_id, image.as_deref(), &request_id)
+        crate::portable::save_capture_task(db, input, image.as_deref(), &request_id)
     })
     .await?;
     *app.state::<crate::desktop::DesktopState>()

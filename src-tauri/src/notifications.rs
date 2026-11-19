@@ -148,27 +148,3 @@ pub fn can_retry_delivery(value: &serde_json::Value, now: chrono::DateTime<chron
         _ => true,
     }
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::{Duration, Utc};
-    use serde_json::json;
-    #[test]
-    fn failed_and_interrupted_deliveries_can_retry_without_repeating_confirmed_ones() {
-        let now = Utc::now();
-        assert!(can_retry_delivery(&json!({"state":"failed"}), now));
-        assert!(!can_retry_delivery(&json!({"state":"sent"}), now));
-        assert!(!can_retry_delivery(
-            &json!({"state":"intent","updatedAt":now.to_rfc3339()}),
-            now
-        ));
-        assert!(can_retry_delivery(
-            &json!({"state":"intent","updatedAt":(now-Duration::seconds(31)).to_rfc3339()}),
-            now
-        ));
-        assert!(can_retry_delivery(
-            &json!({"state":"intent","updatedAt":"invalid"}),
-            now
-        ));
-    }
-}

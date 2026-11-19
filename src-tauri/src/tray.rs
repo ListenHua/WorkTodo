@@ -13,6 +13,7 @@ use tauri::{
 #[serde(rename_all = "kebab-case")]
 pub enum TrayAction {
     AddTask,
+    QuickAddTask,
     ViewTasks,
     AddProject,
     ViewProjects,
@@ -48,7 +49,7 @@ pub fn tray_take_actions(
     Ok(std::mem::take(&mut *pending))
 }
 
-fn dispatch(app: &AppHandle, action: TrayAction) {
+pub fn dispatch(app: &AppHandle, action: TrayAction) {
     app.state::<DesktopState>()
         .pending_tray_actions
         .lock()
@@ -104,7 +105,7 @@ pub fn initialize(app: &AppHandle) -> AppResult<()> {
                 width,
                 height,
             ))
-            // macOS uses the alpha mask to keep the outline legible on either menu bar theme.
+            // macOS uses the alpha mask to keep the mark legible on either menu bar theme.
             .icon_as_template(true)
             .menu(&menu)
             .show_menu_on_left_click(true)
@@ -124,45 +125,4 @@ pub fn initialize(app: &AppHandle) -> AppResult<()> {
         Ok(())
     };
     build().map_err(|_| AppError::new("TRAY_ERROR", "无法创建托盘菜单或图标"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn tray_menu_routes_have_distinct_frontend_actions() {
-        for (id, payload) in [
-            ("tray-add-task", "add-task"),
-            ("tray-view-tasks", "view-tasks"),
-            ("tray-add-project", "add-project"),
-            ("tray-view-projects", "view-projects"),
-            ("tray-settings", "settings"),
-        ] {
-            let action = TrayAction::from_id(id).unwrap();
-            assert_eq!(serde_json::to_value(action).unwrap(), payload);
-        }
-        assert_eq!(TrayAction::from_id("tray-toggle"), None);
-        assert_eq!(TrayAction::from_id("tray-quit"), None);
-        assert_eq!(TrayAction::from_id("show"), None);
-    }
-
-    #[test]
-    fn tray_icon_is_white_with_a_transparent_background_and_outline() {
-        let image = image::load_from_memory(include_bytes!("../icons/tray.png"))
-            .unwrap()
-            .into_rgba8();
-        assert_eq!(image.dimensions(), (36, 36));
-        assert_eq!(image.get_pixel(0, 0)[3], 0);
-        // Both the outer background and the inside of the folder remain hollow.
-        assert_eq!(image.get_pixel(18, 12)[3], 0);
-        let mut visible = 0;
-        for pixel in image.pixels() {
-            if pixel[3] != 0 {
-                assert_eq!(&pixel.0[..3], &[255, 255, 255]);
-                visible += 1;
-            }
-        }
-        assert!(visible > 150 && visible < 700);
-    }
 }

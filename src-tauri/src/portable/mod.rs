@@ -4,6 +4,7 @@ pub mod file_versions;
 pub mod io;
 pub mod journal;
 pub mod location;
+pub mod projects;
 pub mod recovery;
 pub mod transfer;
 use crate::{
@@ -680,21 +681,58 @@ pub fn save_capture(
             .take(200)
             .collect()
     };
-    let mut task = services::tasks::create(
+    save_capture_task(
         db,
-        crate::models::CreateTask {
+        crate::models::UpdateTask {
             title,
             project_id,
             priority: "low".into(),
             plan_date: None,
+            description: text.into(),
+            due_at: None,
+            status: "todo".into(),
+            reminder_at: None,
+        },
+        image,
+        request_id,
+    )
+}
+
+pub fn save_capture_task(
+    db: &mut Connection,
+    input: crate::models::UpdateTask,
+    image: Option<&Path>,
+    request_id: &str,
+) -> AppResult<crate::models::Task> {
+    Uuid::parse_str(request_id).map_err(|_| io::invalid("采集请求标识无效"))?;
+    if let Some(task) = services::tasks::list(db)?
+        .into_iter()
+        .find(|task| task.id == request_id)
+    {
+        return Ok(task);
+    }
+    let transaction = db.transaction()?;
+    let task = services::tasks::create(
+        &transaction,
+        crate::models::CreateTask {
+            title: input.title.clone(),
+            project_id: input.project_id.clone(),
+            priority: input.priority.clone(),
+            plan_date: input.plan_date.clone(),
         },
     )?;
-    db.execute(
-        "UPDATE tasks SET id=?2,description=?3 WHERE id=?1",
-        rusqlite::params![task.id, request_id, text],
+    transaction.execute(
+        "UPDATE tasks SET id=?2 WHERE id=?1",
+        rusqlite::params![task.id, request_id],
     )?;
-    task.id = request_id.into();
-    task.description = text.into();
+    transaction.commit()?;
+    let task = match services::tasks::update(db, request_id, input) {
+        Ok(task) => task,
+        Err(error) => {
+            db.execute("DELETE FROM tasks WHERE id=?1", [request_id])?;
+            return Err(error);
+        }
+    };
     let result = (|| {
         if let Some(image) = image {
             services::attachments::import(db, &task.id, image)?;
@@ -709,6 +747,7 @@ pub fn save_capture(
     })();
     if let Err(error) = result {
         let _ = db.execute("DELETE FROM task_files WHERE task_id=?1", [&task.id]);
+        let _ = db.execute("DELETE FROM reminders WHERE task_id=?1", [&task.id]);
         let _ = db.execute("DELETE FROM tasks WHERE id=?1", [&task.id]);
         return Err(error);
     }

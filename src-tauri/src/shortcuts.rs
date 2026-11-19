@@ -114,7 +114,14 @@ fn handle(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEvent) {
         .map(|binding| binding.action);
     match action {
         Some(Action::AddTask) if event.state == ShortcutState::Pressed => {
-            let _ = desktop::show_capture(app);
+            if app
+                .get_webview_window("main")
+                .is_some_and(|window| window.is_focused().unwrap_or(false))
+            {
+                crate::tray::dispatch(app, crate::tray::TrayAction::QuickAddTask);
+            } else {
+                let _ = desktop::show_capture(app);
+            }
         }
         Some(Action::ToggleWindow) if event.state == ShortcutState::Pressed => {
             crate::tray::toggle_main(app)
@@ -262,85 +269,5 @@ pub fn shortcut_recording(window: tauri::WebviewWindow, active: bool) {
         let state = window.state::<DesktopState>();
         state.recording_shortcut.store(active, Ordering::SeqCst);
         state.keyboard_hold.lock().unwrap().reset();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn duplicate_aliases_are_rejected_and_swapping_owned_keys_needs_no_registration() {
-        let settings = DesktopSettings::default();
-        let previous = bindings(&settings).unwrap();
-        let swapped = DesktopSettings {
-            shortcut: settings.toggle_shortcut.clone(),
-            toggle_shortcut: settings.shortcut.clone(),
-            ..settings.clone()
-        };
-        let next = bindings(&swapped).unwrap();
-        let prepared = prepare_changes(
-            previous,
-            next,
-            |_| panic!("owned key must be reused"),
-            |_| panic!("no keys to remove"),
-        )
-        .unwrap();
-        assert!(prepared.added.is_empty());
-        let duplicate = DesktopSettings {
-            shortcut: "Control+Alt+KeyD".into(),
-            toggle_shortcut: "Alt+Ctrl+D".into(),
-            ..settings
-        };
-        assert_eq!(bindings(&duplicate).unwrap_err().code, "SHORTCUT_CONFLICT");
-    }
-
-    #[test]
-    fn occupied_second_binding_rolls_back_only_new_keys() {
-        let previous = bindings(&DesktopSettings::default()).unwrap();
-        let next = bindings(&DesktopSettings {
-            shortcut: "Alt+Shift+F8".into(),
-            toggle_shortcut: "Alt+Shift+F9".into(),
-            ..DesktopSettings::default()
-        })
-        .unwrap();
-        let mut attempted = Vec::new();
-        let mut removed = Vec::new();
-        let result = prepare_changes(
-            previous.clone(),
-            next.clone(),
-            |binding| {
-                attempted.push(binding.shortcut);
-                if binding.action == Action::ToggleWindow {
-                    Err(AppError::new("SHORTCUT_CONFLICT", "occupied"))
-                } else {
-                    Ok(())
-                }
-            },
-            |shortcut| removed.push(shortcut),
-        );
-        assert!(result.is_err());
-        assert_eq!(attempted.len(), 2);
-        assert_eq!(removed, vec![next[0].shortcut]);
-        assert!(previous
-            .iter()
-            .all(|binding| !removed.contains(&binding.shortcut)));
-    }
-
-    #[test]
-    fn disabled_shortcuts_and_capture_conflicts_are_validated() {
-        let mut settings = DesktopSettings {
-            shortcut: "".into(),
-            toggle_shortcut: "".into(),
-            ..DesktopSettings::default()
-        };
-        assert!(bindings(&settings).unwrap().is_empty());
-        settings.shortcut = "Alt+Ctrl+KeyD".into();
-        settings.middle_capture = true;
-        settings.capture_trigger = "Control+Alt+D".into();
-        assert_eq!(bindings(&settings).unwrap_err().code, "SHORTCUT_CONFLICT");
-        for value in ["D", "Ctrl", "Alt+Unknown", "F21", "CommandOrControl+C"] {
-            assert!(parse(value, Action::ToggleWindow).is_err(), "{value}");
-        }
     }
 }

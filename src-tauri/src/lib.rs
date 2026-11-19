@@ -99,6 +99,7 @@ pub fn run() {
             commands::desktop_quit,
             commands::capture_image,
             commands::capture_save,
+            commands::capture_show,
             commands::capture_discard,
             commands::tasks_create_full,
             commands::tasks_update,

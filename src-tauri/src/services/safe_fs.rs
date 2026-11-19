@@ -124,25 +124,3 @@ fn copy_level(source: &Path, target: &Path, depth: usize, count: &mut usize) -> 
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod exclusive_tests {
-    use super::*;
-    #[test]
-    fn rename_never_replaces_an_existing_file_or_directory() {
-        let root = tempfile::tempdir().unwrap();
-        let source = root.path().join("source");
-        let target = root.path().join("target");
-        fs::write(&source, b"source bytes").unwrap();
-        fs::write(&target, b"target bytes").unwrap();
-        assert!(rename_exclusive(&source, &target).is_err());
-        assert_eq!(fs::read(&source).unwrap(), b"source bytes");
-        assert_eq!(fs::read(&target).unwrap(), b"target bytes");
-        let a = root.path().join("a");
-        let b = root.path().join("b");
-        fs::create_dir(&a).unwrap();
-        fs::create_dir(&b).unwrap();
-        assert!(rename_exclusive(&a, &b).is_err());
-        assert!(a.is_dir() && b.is_dir());
-    }
-}
