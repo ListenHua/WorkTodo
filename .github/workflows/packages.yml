@@ -84,7 +84,7 @@ jobs:
         run: |
           assets=()
           for asset in release-staging/*; do
-            case "$asset" in
+            case "${asset##*/}" in
               WorkTodo_*.dmg|WorkTodo_*-setup.exe|WorkTodo_*.app.zip) assets+=("$asset") ;;
             esac
           done
