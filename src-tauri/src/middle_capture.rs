@@ -183,7 +183,7 @@ pub fn mouse_button(trigger: &str) -> Option<u8> {
     }
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 fn mouse_transition(event_type: u32, button: i64) -> Option<(u8, bool)> {
     let down = match event_type {
         1 | 3 | 25 => true,
