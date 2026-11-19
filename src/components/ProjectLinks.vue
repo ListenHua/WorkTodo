@@ -397,7 +397,14 @@ async function open(link: ProjectLink) {
         >
       </li>
     </ul>
-    <EmptyState v-else title="暂无链接" />
+    <EmptyState
+      v-else
+      kind="links"
+      title="暂无链接"
+      action-label="点击新增"
+      :disabled="busy || !!workspace.status.readOnly"
+      @action="edit()"
+    />
   </section>
   <NModal
     v-model:show="show"

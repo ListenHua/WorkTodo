@@ -7,6 +7,7 @@ export const useUiStore = defineStore('ui', () => {
   const captureText = ref('')
   const search = ref('')
   const projectDialog = ref(false)
+  const folderProjectsDialog = ref(false)
   const taskDialog = ref(false)
   const defaultProjectId = ref<string | null>(null)
   function newTask(projectId: string | null = null) {
@@ -31,6 +32,7 @@ export const useUiStore = defineStore('ui', () => {
   return {
     search,
     projectDialog,
+    folderProjectsDialog,
     taskDialog,
     defaultProjectId,
     newTask,

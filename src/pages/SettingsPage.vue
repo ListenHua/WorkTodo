@@ -20,8 +20,11 @@ import AppIcon from '../components/AppIcon.vue'
 import IconHint from '../components/IconHint.vue'
 import AboutSettings from '../components/AboutSettings.vue'
 import { useReleaseStore } from '../stores/release'
-import { shortcutFromKey } from '../shared/capture-shortcut'
-import { globalShortcutDefaults, globalShortcutConflict } from '../shared/global-shortcuts'
+import {
+  shortcutFromKey,
+  globalShortcutDefaults,
+  globalShortcutConflict,
+} from '../shared/global-shortcuts'
 import ShortcutRecorder from '../components/ShortcutRecorder.vue'
 const workspace = useWorkspaceStore()
 const router = useRouter()

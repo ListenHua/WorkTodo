@@ -81,13 +81,10 @@ code {
   letter-spacing: 0.4px;
 }
 .brand-symbol {
+  display: block;
+  flex-shrink: 0;
   width: 39px;
   height: 39px;
-  background: var(--accent);
-  color: var(--accent-contrast);
-  display: grid;
-  place-items: center;
-  border-radius: 12px;
 }
 .sidebar-caption {
   margin: 0 14px 12px;
@@ -383,34 +380,6 @@ h1 {
 .empty-state {
   text-align: center;
   padding: 24px 24px 30px;
-}
-.empty-icon {
-  width: 65px;
-  height: 65px;
-  margin: 0 auto 15px;
-  display: grid;
-  place-items: center;
-  background: var(--accent-soft);
-  color: var(--muted);
-  border-radius: 24px;
-}
-.empty-state h3 {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text);
-}
-.empty-state p {
-  margin: 8px auto 0;
-  max-width: 440px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.8;
-}
-.empty-actions {
-  margin-top: 17px;
-}
-.empty-actions .n-button {
-  font-size: 12px;
 }
 .project-mini-grid {
   display: grid;
@@ -1153,8 +1122,6 @@ h1 {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
-  color: var(--muted);
 }
 .files-error {
   margin-bottom: 16px;
@@ -1360,9 +1327,6 @@ button.file-name:hover {
 }
 
 /* Shared spacing and readable metadata across desktop window sizes. */
-.empty-actions {
-  margin-top: 16px;
-}
 .metric-card {
   transition: background 0.15s;
 }
@@ -1910,7 +1874,7 @@ a.metric-card:focus-visible {
   background: var(--surface);
   box-shadow: var(--card-hover-shadow);
 }
-.topbar-search-results button {
+.topbar-search-results > button {
   width: 100%;
   display: flex;
   align-items: center;
@@ -1922,23 +1886,18 @@ a.metric-card:focus-visible {
   background: transparent;
   color: var(--text);
 }
-.topbar-search-results button.active {
+.topbar-search-results > button.active {
   background: var(--accent-soft);
 }
-.topbar-search-results button > span {
+.topbar-search-results > button > span {
   min-width: 0;
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.topbar-search-results button > .app-icon,
+.topbar-search-results > button > .app-icon,
 .topbar-search-results small {
-  color: var(--muted);
-}
-.search-empty {
-  padding: 20px 8px;
-  text-align: center;
   color: var(--muted);
 }
 .flat-layout {
@@ -2181,9 +2140,6 @@ a.metric-card:focus-visible {
 }
 .release-history[open] summary::before {
   transform: rotate(90deg);
-}
-.release-empty {
-  color: var(--muted);
 }
 .release-drawer-header {
   display: flex;

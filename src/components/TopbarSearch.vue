@@ -6,6 +6,7 @@ import { useUiStore } from '../stores/ui'
 import { useWorkspaceStore } from '../stores/workspace'
 import type { Task } from '../shared/types'
 import AppIcon from './AppIcon.vue'
+import EmptyState from './EmptyState.vue'
 const ui = useUiStore()
 const workspace = useWorkspaceStore()
 const route = useRoute()
@@ -135,7 +136,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', outside))
       v-if="expanded"
       id="topbar-search-results"
       class="topbar-search-results"
-      role="listbox"
+      :role="results.length ? 'listbox' : undefined"
       aria-label="搜索结果"
     >
       <button
@@ -153,7 +154,15 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', outside))
         <AppIcon :name="item.icon" :size="18" /><span>{{ item.title }}</span
         ><small>{{ item.kind }}</small>
       </button>
-      <p v-if="!results.length" class="search-empty" role="status">没有搜索结果</p>
+      <EmptyState
+        v-if="!results.length"
+        compact
+        kind="search"
+        title="没有搜索结果"
+        action-label="点击清除搜索"
+        role="status"
+        @action="ui.search = ''"
+      />
     </div>
   </div>
 </template>

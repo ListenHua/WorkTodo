@@ -45,7 +45,6 @@ const shortened = (name: string) =>
     <div class="panel-heading dashboard-panel-heading">
       <div>
         <h2 id="project-chart-title">项目待办分布</h2>
-        <p>进行中项目的工作量与完成情况</p>
       </div>
       <div class="chart-pagination" v-if="pageCount > 1">
         <span>{{ page + 1 }} / {{ pageCount }}</span>
@@ -131,11 +130,11 @@ const shortened = (name: string) =>
       </svg>
       <EmptyState
         v-else-if="!loading"
-        icon="folder"
+        kind="projects"
         title="暂无进行中的项目"
-        description="创建项目后，在这里查看待办分布。"
-        ><button class="text-link" @click="emit('browse')">前往项目空间</button></EmptyState
-      >
+        action-label="点击查看项目"
+        @action="emit('browse')"
+      />
       <div v-else class="chart-loading" role="status">正在加载项目数据…</div>
       <div v-if="selected" class="chart-tooltip" role="tooltip">
         <strong>{{ selected.name }}</strong>

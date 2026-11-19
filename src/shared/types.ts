@@ -94,7 +94,7 @@ export interface WorkspaceApi {
   updateTask(id: string, input: UpdateTask): Promise<Task>
   trashTask(id: string, restore: boolean, toInbox?: boolean): Promise<void>
   updateProject(id: string, input: CreateProject): Promise<Project>
-  deleteProject(id: string): Promise<void>
+  deleteProject(id: string, deleteFiles?: boolean): Promise<void>
   setProjectPinned(id: string, pinned: boolean): Promise<void>
   setProjectStatus(
     id: string,

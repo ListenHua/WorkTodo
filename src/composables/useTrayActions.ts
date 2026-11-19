@@ -9,9 +9,10 @@ import { useUiStore } from '../stores/ui'
 import { useWorkspaceStore } from '../stores/workspace'
 import { useAppMessage } from './useAppMessage'
 
-type TrayAction = 'add-task' | 'view-tasks' | 'add-project' | 'view-projects' | 'settings'
+type TrayAction =
+  'quick-add-task' | 'add-task' | 'view-tasks' | 'add-project' | 'view-projects' | 'settings'
 
-export function useTrayActions() {
+export function useTrayActions(openContextTask: () => boolean) {
   const router = useRouter()
   const ui = useUiStore()
   const workspace = useWorkspaceStore()
@@ -25,6 +26,13 @@ export function useTrayActions() {
     const actions = await invoke<TrayAction[]>('tray_take_actions')
     for (const action of actions) {
       if (closed) return
+      if (action === 'quick-add-task') {
+        await workspace.refresh()
+        await nextTick()
+        if (closed) return
+        if (!openContextTask()) await invoke('capture_show')
+        continue
+      }
       ui.projectDialog = false
       ui.taskDialog = false
       ui.search = ''

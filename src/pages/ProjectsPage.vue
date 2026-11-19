@@ -5,7 +5,7 @@ import { useAppMessage } from '../composables/useAppMessage'
 import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Project } from '../shared/types'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { NButton, NDropdown, NModal, NTab, NTabs } from 'naive-ui'
+import { NButton, NCheckbox, NDropdown, NModal, NTab, NTabs } from 'naive-ui'
 import { useWorkspaceStore } from '../stores/workspace'
 import { useUiStore } from '../stores/ui'
 import { errorMessage, progress } from '../shared/domain'
@@ -13,7 +13,6 @@ import AppIcon from '../components/AppIcon.vue'
 import EmptyState from '../components/EmptyState.vue'
 import TaskList from '../components/TaskList.vue'
 import ProjectFiles from '../components/ProjectFiles.vue'
-import WorkspaceFiles from '../components/WorkspaceFiles.vue'
 import ProjectLinks from '../components/ProjectLinks.vue'
 import ProjectLinkIcons from '../components/ProjectLinkIcons.vue'
 import ProjectMasonry from '../components/ProjectMasonry.vue'
@@ -76,6 +75,10 @@ const selected = computed(() => workspace.projects.find((p) => p.id === route.qu
 const contextProject = ref<Project | null>(null)
 const deleteTarget = ref<Project | null>(null)
 const deleting = ref(false)
+const deleteFiles = ref(false)
+watch(deleteTarget, () => {
+  deleteFiles.value = false
+})
 const contextVisible = ref(false)
 const contextVersion = ref(0)
 const contextPosition = ref({ x: 0, y: 0 })
@@ -89,7 +92,7 @@ const contextOptions = computed(() =>
         {
           label: '删除项目',
           key: 'delete',
-          disabled: sorting.value || !!workspace.status.readOnly,
+          disabled: sorting.value || !workspace.status.available,
         },
       ]
     : [
@@ -148,9 +151,8 @@ function selectContextAction(key: string) {
   if (project) {
     if (sorting.value) return
     if (key === 'open') void router.push({ path: '/projects', query: { project: project.id } })
-    if (workspace.status.readOnly) return
-    if (key === 'edit') ui.editProject(project)
-    if (key === 'delete') deleteTarget.value = project
+    if (key === 'delete' && workspace.status.available) deleteTarget.value = project
+    if (key === 'edit' && !workspace.status.readOnly) ui.editProject(project)
     return
   }
   if (key === 'sort') beginSorting()
@@ -160,7 +162,7 @@ async function confirmDeleteProject() {
   if (!deleteTarget.value || deleting.value) return
   deleting.value = true
   try {
-    await workspace.deleteProject(deleteTarget.value.id)
+    await workspace.deleteProject(deleteTarget.value.id, deleteFiles.value)
     deleteTarget.value = null
     message.success('项目已删除')
   } catch (cause) {
@@ -289,7 +291,14 @@ const projectTasks = computed(() =>
         }}</span>
       </div>
       <TaskList v-if="projectTasks.length" :tasks="projectTasks" />
-      <EmptyState v-else title="暂无待办" /></section
+      <EmptyState
+        v-else
+        kind="tasks"
+        title="暂无待办事项"
+        action-label="点击新增"
+        :disabled="!!workspace.status.readOnly"
+        @action="ui.newTask(selected.id)"
+      /></section
   ></template>
   <section
     v-else
@@ -411,12 +420,14 @@ const projectTasks = computed(() =>
       </template>
     </ProjectMasonry>
     <section v-else class="panel">
-      <EmptyState icon="folder" :title="ui.search.trim() ? '没有匹配的项目' : '暂无项目'"
-        ><NButton v-if="ui.search.trim()" @click="ui.search = ''">清除搜索</NButton
-        ><NButton v-else type="primary" @click="ui.newProject()">创建项目</NButton></EmptyState
-      >
+      <EmptyState
+        :kind="ui.search.trim() ? 'search' : 'projects'"
+        :title="ui.search.trim() ? '没有匹配的项目' : '暂无项目'"
+        :action-label="ui.search.trim() ? '点击清除搜索' : '点击新增'"
+        :disabled="!ui.search.trim() && !!workspace.status.readOnly"
+        @action="ui.search.trim() ? (ui.search = '') : ui.newProject()"
+      />
     </section>
-    <WorkspaceFiles v-if="!sorting" />
     <NDropdown
       :key="contextVersion"
       trigger="manual"
@@ -455,7 +466,13 @@ const projectTasks = computed(() =>
     "
   >
     <p>
-      确定删除“{{ deleteTarget?.name }}”？项目内的待办将移入回收站，本地项目文件夹和文件会保留。
+      确定删除“{{ deleteTarget?.name }}”？项目内的待办将移入回收站，默认保留本地项目文件夹和文件。
+    </p>
+    <NCheckbox v-model:checked="deleteFiles" :disabled="deleting">
+      是否删除文件夹下的数据与文件
+    </NCheckbox>
+    <p v-if="deleteFiles" class="form-error" role="note">
+      项目文件夹及其中的数据与文件将永久删除，无法通过回收站恢复。
     </p>
     <template #action>
       <NButton :disabled="deleting" @click="deleteTarget = null">取消</NButton>

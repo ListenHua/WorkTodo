@@ -139,6 +139,7 @@ function reset() {
     <TaskList v-else-if="filtered.length" :tasks="filtered" />
     <EmptyState
       v-else
+      :kind="hasFilters ? 'search' : 'tasks'"
       :title="
         hasFilters
           ? route.meta.filter === 'trash'
@@ -146,13 +147,14 @@ function reset() {
             : '没有匹配的待办'
           : route.meta.filter === 'trash'
             ? '回收站为空'
-            : '暂无待办'
+            : '暂无待办事项'
       "
-    >
-      <NButton v-if="hasFilters" @click="reset">清除筛选</NButton>
-      <NButton v-else-if="route.meta.filter !== 'trash'" type="primary" @click="ui.newTask()"
-        >新建待办</NButton
-      >
-    </EmptyState>
+      :action-label="
+        hasFilters ? '点击清除筛选' : route.meta.filter === 'trash' ? '点击查看待办' : '点击新增'
+      "
+      :action-to="!hasFilters && route.meta.filter === 'trash' ? '/tasks' : undefined"
+      :disabled="!hasFilters && route.meta.filter !== 'trash' && !!workspace.status.readOnly"
+      @action="hasFilters ? reset() : ui.newTask()"
+    />
   </section>
 </template>

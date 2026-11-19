@@ -122,6 +122,7 @@ export interface StorageInfo {
 export interface WorkspaceEntry {
   name: string
   directory: boolean
+  directoryMerge?: import('../shared/types').ProjectDirectoryMerge
 }
 export const desktopApi = {
   async entries(): Promise<WorkspaceEntry[]> {

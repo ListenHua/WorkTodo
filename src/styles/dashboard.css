@@ -35,12 +35,7 @@
   min-width: 0;
   padding: 16px 20px;
   border: 1px solid transparent;
-  transition:
-    border-color 0.18s,
-    background 0.18s;
-}
-.dashboard .metric-card:hover {
-  border-color: var(--border);
+  transition: background 0.18s;
 }
 .dashboard .metric-top {
   font-size: 12px;
@@ -285,22 +280,25 @@
   justify-content: center;
   padding: 12px 16px;
 }
-.dashboard .empty-icon {
-  width: 42px;
-  height: 42px;
-  margin-bottom: 10px;
-  border-radius: 13px;
+.dashboard .empty-state {
+  --empty-illustration-size: 136px;
 }
-.dashboard .empty-icon > svg {
-  width: 23px;
-  height: 23px;
+.dashboard .empty-illustration {
+  flex-shrink: 1;
+  min-height: 64px;
 }
-.dashboard .empty-state p {
-  margin-top: 5px;
-  font-size: 11px;
+.dashboard .empty-state > :not(.empty-illustration) {
+  flex-shrink: 0;
 }
-.dashboard .empty-actions {
-  margin-top: 12px;
+.chart-plot > .trend-empty-state {
+  position: absolute;
+  inset: 0 0 32px;
+  height: auto;
+  padding: 4px 12px;
+  pointer-events: none;
+}
+.trend-empty-state .empty-illustration {
+  --empty-illustration-size: 120px;
 }
 .dashboard-tabs {
   display: inline-flex;
@@ -371,6 +369,7 @@
 }
 .dashboard-list-body > .empty-state {
   display: flex;
+  height: 100%;
   min-height: 100%;
   flex-direction: column;
   align-items: center;

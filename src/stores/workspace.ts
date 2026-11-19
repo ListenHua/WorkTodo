@@ -147,13 +147,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     await refresh()
     if (desktop) void emit('workspace-changed')
   }
-  async function deleteProject(id: string) {
-    if (!desktop) {
-      if (!projects.value.some((project) => project.id === id)) throw new Error('项目不存在')
-      for (const task of tasks.value.filter((task) => task.projectId === id))
-        await attachments.movePreview(task.id, null)
-    }
-    await api.deleteProject(id)
+  async function deleteProject(id: string, deleteFiles = false) {
+    const projectTasks = tasks.value.filter((task) => task.projectId === id)
+    await api.deleteProject(id, deleteFiles)
+    if (!desktop) for (const task of projectTasks) attachments.forgetPreview(task.id)
     if (!desktop && (await preferences.get('capture_project')) === id)
       await preferences.set('capture_project', '')
     await refresh()

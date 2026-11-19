@@ -1,9 +1,16 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import EmptyState from './EmptyState.vue'
 import { useChartSize } from '../composables/useChartSize'
 import { chartScale, type TrendDay } from '../shared/dashboard'
 
-const props = defineProps<{ days: TrendDay[]; today: string; loading: boolean }>()
+const props = defineProps<{
+  days: TrendDay[]
+  today: string
+  loading: boolean
+  readOnly?: boolean
+}>()
+const emit = defineEmits<{ create: [] }>()
 const { element, width, height } = useChartSize()
 const active = ref<number | null>(null)
 const todayIndex = computed(() =>
@@ -18,6 +25,7 @@ watch(
     active.value = null
   },
 )
+const hasActivity = computed(() => props.days.some((day) => day.created > 0 || day.completed > 0))
 const scale = computed(() =>
   chartScale(Math.max(0, ...props.days.flatMap((d) => [d.created, d.completed]))),
 )
@@ -83,7 +91,6 @@ function keyboard(event: KeyboardEvent) {
     <div class="panel-heading dashboard-panel-heading">
       <div>
         <h2 id="trend-chart-title">待办趋势</h2>
-        <p>每日新增与完成数量</p>
       </div>
     </div>
     <div class="chart-legend">
@@ -107,26 +114,32 @@ function keyboard(event: KeyboardEvent) {
       @keydown="keyboard"
     >
       <svg :viewBox="`0 0 ${width} ${height}`" class="dashboard-svg" aria-hidden="true">
-        <g class="chart-axis">
+        <g v-if="hasActivity" class="chart-axis">
           <g v-for="tick in scale.ticks" :key="tick">
             <line :x1="plot.left" :x2="width - 18" :y1="y(tick)" :y2="y(tick)" />
             <text :x="plot.left - 10" :y="y(tick) + 4" text-anchor="end">{{ tick }}</text>
           </g>
         </g>
-        <path :d="area" class="chart-area" />
-        <path :d="createdPath" class="chart-line chart-line-created" />
-        <path :d="completedPath" class="chart-line chart-line-completed" />
+        <path v-if="hasActivity" :d="area" class="chart-area" />
+        <path v-if="hasActivity" :d="createdPath" class="chart-line chart-line-created" />
+        <path v-if="hasActivity" :d="completedPath" class="chart-line chart-line-completed" />
         <g v-for="(day, index) in days" :key="day.date">
           <text
             class="chart-date-label"
             :class="{ 'is-today': day.date === today }"
             :x="x(index)"
             :y="height - 14"
-            :text-anchor="index === 0 ? 'start' : index === days.length - 1 ? 'end' : 'middle'"
+            text-anchor="middle"
           >
             {{ day.date === today ? '今天' : day.label }}
           </text>
-          <circle class="chart-trend-dot" :cx="x(index)" :cy="y(day.completed)" r="3" />
+          <circle
+            v-if="hasActivity"
+            class="chart-trend-dot"
+            :cx="x(index)"
+            :cy="y(day.completed)"
+            r="3"
+          />
         </g>
         <g v-if="selected && active !== null">
           <line class="chart-crosshair" :x1="x(active)" :x2="x(active)" :y1="plot.top" :y2="y(0)" />
@@ -146,10 +159,16 @@ function keyboard(event: KeyboardEvent) {
           >新增 <b>{{ selected.created }}</b></span
         >
       </div>
-      <div v-else-if="loading" class="chart-message" role="status">正在加载待办数据…</div>
-      <div v-else-if="!totals.created && !totals.completed" class="chart-message">
-        这段时间暂无新增或完成的待办
-      </div>
+      <div v-if="loading && !selected" class="chart-message" role="status">正在加载待办数据…</div>
+      <EmptyState
+        v-if="!loading && !hasActivity"
+        class="trend-empty-state"
+        kind="activity"
+        title="暂无待办趋势"
+        action-label="点击新增"
+        :disabled="readOnly"
+        @action="emit('create')"
+      />
     </div>
   </section>
 </template>

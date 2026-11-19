@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { compareTaskPriority } from '../shared/task-priority'
 import { computed, nextTick, ref } from 'vue'
-import { NButton, NSkeleton, NTabs, NTab } from 'naive-ui'
+import { NSkeleton, NTabs, NTab } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import { useWorkspaceStore } from '../stores/workspace'
 import { useUiStore } from '../stores/ui'
@@ -16,15 +16,15 @@ import TaskTrendChart from '../components/TaskTrendChart.vue'
 const workspace = useWorkspaceStore()
 const ui = useUiStore()
 const router = useRouter()
-const taskView = ref<'today' | 'overdue'>('today')
+const taskView = ref<'pending' | 'today'>('pending')
 async function taskViewKeydown(event: KeyboardEvent) {
   if (event.isComposing) return
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End', 'Enter', ' '].includes(event.key)) return
   event.preventDefault()
-  if (event.key === 'Home') taskView.value = 'today'
-  else if (event.key === 'End') taskView.value = 'overdue'
+  if (event.key === 'Home') taskView.value = 'pending'
+  else if (event.key === 'End') taskView.value = 'today'
   else if (event.key.startsWith('Arrow'))
-    taskView.value = taskView.value === 'today' ? 'overdue' : 'today'
+    taskView.value = taskView.value === 'pending' ? 'today' : 'pending'
   await nextTick()
   document.getElementById(`overview-${taskView.value}-tab`)?.focus()
 }
@@ -35,26 +35,23 @@ const trend = computed(() => taskTrend(scopedTasks.value, workspace.currentDay))
 const initialLoading = computed(
   () => workspace.loading && !workspace.tasks.length && !workspace.projects.length,
 )
-const overdue = computed(() =>
-  workspace.pending
-    .filter((t) => t.dueAt && new Date(t.dueAt).getTime() < workspace.now)
-    .sort((a, b) => Date.parse(a.dueAt!) - Date.parse(b.dueAt!)),
-)
 const displayedTasks = computed(() =>
-  [...(taskView.value === 'today' ? workspace.today : overdue.value)].sort(compareTaskPriority),
+  [...(taskView.value === 'pending' ? workspace.pending : workspace.today)].sort(
+    compareTaskPriority,
+  ),
 )
 const metrics = computed(() => [
   {
-    title: '今日计划',
+    title: '待办事项',
+    to: '/tasks',
+    value: workspace.pending.length,
+    icon: 'list',
+  },
+  {
+    title: '今日待办',
     to: '/tasks?date=today',
     value: workspace.today.length,
     icon: 'calendar',
-  },
-  {
-    title: '已逾期',
-    to: '/tasks?view=overdue',
-    value: overdue.value.length,
-    icon: 'clock',
   },
   {
     title: '进行中项目',
@@ -100,7 +97,13 @@ function openProject(id: string) {
         @select="openProject"
         @browse="router.push('/projects')"
       />
-      <TaskTrendChart :days="trend" :today="workspace.currentDay" :loading="initialLoading" />
+      <TaskTrendChart
+        :days="trend"
+        :today="workspace.currentDay"
+        :loading="initialLoading"
+        :read-only="!!workspace.status.readOnly"
+        @create="ui.newTask()"
+      />
     </div>
     <div class="dashboard-details">
       <section class="panel dashboard-tasks" aria-label="待办概况">
@@ -114,6 +117,16 @@ function openProject(id: string) {
             aria-label="概览待办视图"
           >
             <NTab
+              name="pending"
+              id="overview-pending-tab"
+              role="tab"
+              :aria-selected="taskView === 'pending'"
+              :tabindex="taskView === 'pending' ? 0 : -1"
+              aria-controls="overview-task-panel"
+              @keydown="taskViewKeydown"
+              >待办事项 <span class="task-view-count">{{ workspace.pending.length }}</span></NTab
+            >
+            <NTab
               name="today"
               id="overview-today-tab"
               role="tab"
@@ -123,23 +136,13 @@ function openProject(id: string) {
               @keydown="taskViewKeydown"
               >今日待办 <span class="task-view-count">{{ workspace.today.length }}</span></NTab
             >
-            <NTab
-              name="overdue"
-              id="overview-overdue-tab"
-              role="tab"
-              :aria-selected="taskView === 'overdue'"
-              :tabindex="taskView === 'overdue' ? 0 : -1"
-              aria-controls="overview-task-panel"
-              @keydown="taskViewKeydown"
-              >已逾期 <span class="task-view-count">{{ overdue.length }}</span></NTab
-            >
           </NTabs>
           <div class="dashboard-list-actions">
             <RouterLink to="/tasks?view=week" class="text-link subtle future-tasks-link"
               >未来七天</RouterLink
             >
             <RouterLink
-              :to="taskView === 'today' ? '/tasks?date=today' : '/tasks?view=overdue'"
+              :to="taskView === 'pending' ? '/tasks' : '/tasks?date=today'"
               class="text-link subtle"
               >查看全部 <AppIcon name="arrow" :size="15"
             /></RouterLink>
@@ -157,12 +160,12 @@ function openProject(id: string) {
           <TaskList v-else-if="displayedTasks.length" :tasks="displayedTasks" layout="list" />
           <EmptyState
             v-else
-            :title="taskView === 'today' ? '今日暂无待办' : '没有逾期的待办'"
-            :description="
-              taskView === 'today' ? '安排下一步，让今天更有方向。' : '按计划推进，保持当前的节奏。'
-            "
-            ><NButton @click="ui.newTask()">新建待办</NButton></EmptyState
-          >
+            kind="tasks"
+            :title="taskView === 'pending' ? '暂无待办事项' : '今日暂无待办'"
+            action-label="点击新增"
+            :disabled="!!workspace.status.readOnly"
+            @action="ui.newTask()"
+          />
         </div>
       </section>
       <section class="panel dashboard-projects" aria-labelledby="project-progress-title">
@@ -209,12 +212,11 @@ function openProject(id: string) {
           </div>
           <EmptyState
             v-else
-            icon="folder"
+            kind="projects"
             title="暂无进行中的项目"
-            description="把待办归入项目，逐步推进目标。"
-            ><RouterLink to="/projects" class="text-link"
-              >前往项目空间 <AppIcon name="arrow" :size="15" /></RouterLink
-          ></EmptyState>
+            action-label="点击查看项目"
+            action-to="/projects"
+          />
         </div>
       </section>
     </div>

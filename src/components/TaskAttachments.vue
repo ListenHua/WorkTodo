@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import AppIcon from './AppIcon.vue'
+import EmptyState from './EmptyState.vue'
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { NButton, NSelect, NModal } from 'naive-ui'
 import { attachments } from '../services/attachments'
@@ -123,7 +124,15 @@ onUnmounted(() => {
         >
       </li>
     </ul>
-    <p v-if="!files.length" class="muted">暂无附件</p>
+    <EmptyState
+      v-if="!files.length"
+      compact
+      kind="files"
+      title="暂无附件"
+      action-label="点击添加"
+      :disabled="busy"
+      @action="pick"
+    />
   </div>
   <NModal
     :show="!!preview"

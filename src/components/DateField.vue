@@ -3,9 +3,13 @@ import IconHint from './IconHint.vue'
 import { computed } from 'vue'
 import { NDatePicker } from 'naive-ui'
 import AppIcon from './AppIcon.vue'
-const props = withDefaults(defineProps<{ label: string; datetime?: boolean }>(), {
-  datetime: false,
-})
+const props = withDefaults(
+  defineProps<{ label: string; datetime?: boolean; disabled?: boolean }>(),
+  {
+    datetime: false,
+    disabled: false,
+  },
+)
 const model = defineModel<string>({ default: '' })
 const value = computed({
   get: () => model.value || null,
@@ -24,6 +28,7 @@ const shortcuts = { 今天: () => day(0), 明天: () => day(1), 一周后: () =>
     <span class="field-label">{{ label }}</span>
     <NDatePicker
       v-model:formatted-value="value"
+      :disabled="disabled"
       :type="datetime ? 'datetime' : 'date'"
       :format="datetime ? 'yyyy-MM-dd HH:mm' : 'yyyy-MM-dd'"
       :value-format="datetime ? `yyyy-MM-dd'T'HH:mm` : 'yyyy-MM-dd'"

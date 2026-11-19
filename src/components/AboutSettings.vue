@@ -2,11 +2,14 @@
 import { computed, ref, watch } from 'vue'
 import { NButton, NDrawer, NDrawerContent } from 'naive-ui'
 import { useReleaseStore } from '../stores/release'
+import { useThemeStore } from '../stores/theme'
 import { compareReleaseVersions, releases, releaseCategoriesFor } from '../shared/releases'
 import { useAppMessage } from '../composables/useAppMessage'
 import AppIcon from './AppIcon.vue'
+import EmptyState from './EmptyState.vue'
 
 const release = useReleaseStore()
+const theme = useThemeStore()
 const message = useAppMessage()
 const showLogs = ref(false)
 const copying = ref(false)
@@ -32,7 +35,12 @@ async function copyInfo() {
 <template>
   <section class="about-settings" aria-label="关于WorkTodo">
     <div class="about-identity">
-      <img src="/app-icon.svg" width="64" height="64" alt="" />
+      <img
+        :src="theme.isDark ? '/app-icon.svg' : '/app-icon-light.svg'"
+        width="64"
+        height="64"
+        alt="WorkTodo"
+      />
       <div>
         <h2>WorkTodo</h2>
         <p class="about-version">
@@ -76,7 +84,14 @@ async function copyInfo() {
             ><AppIcon name="close"
           /></NButton></div
       ></template>
-      <p v-if="!release.current" class="release-empty">暂无该版本更新日志</p>
+      <EmptyState
+        v-if="!release.current"
+        compact
+        kind="files"
+        title="暂无该版本更新日志"
+        action-label="点击刷新"
+        @action="release.initialize()"
+      />
       <article v-if="release.current" class="release-entry" aria-label="当前版本更新日志">
         <div class="release-heading">
           <h3>v{{ release.current.version }}</h3>

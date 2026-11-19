@@ -47,6 +47,9 @@ export const attachments = {
     await this.link(taskId, file.id)
     return file
   },
+  forgetPreview(taskId: string) {
+    refs.delete(taskId)
+  },
   async movePreview(taskId: string, projectId: string | null) {
     const copied: ProjectFile[] = []
     for (const file of await this.list(taskId)) {

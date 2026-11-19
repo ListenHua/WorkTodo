@@ -7,7 +7,7 @@ const nativeApi: WorkspaceApi = {
   createFullTask: (input) => invoke('tasks_create_full', { input }),
   updateTask: (id, input) => invoke('tasks_update', { id, input }),
   trashTask: (id, restore, toInbox = false) => invoke('tasks_trash', { id, restore, toInbox }),
-  deleteProject: (id) => invoke('projects_delete', { id }),
+  deleteProject: (id, deleteFiles = false) => invoke('projects_delete', { id, deleteFiles }),
   updateProject: (id, input) => invoke('projects_update', { id, input }),
   setProjectPinned: (id, pinned) => invoke('projects_set_pinned', { id, pinned }),
   setProjectStatus: (id, status, policy = 'inbox') =>

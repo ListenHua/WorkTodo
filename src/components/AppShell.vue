@@ -11,6 +11,7 @@ import { NButton } from 'naive-ui'
 import { useWorkspaceStore } from '../stores/workspace'
 import { useUiStore } from '../stores/ui'
 import { useReleaseStore } from '../stores/release'
+import { useThemeStore } from '../stores/theme'
 import AppIcon from './AppIcon.vue'
 import TopbarSearch from './TopbarSearch.vue'
 import AnimatedThemeToggler from './magicui/AnimatedThemeToggler.vue'
@@ -20,9 +21,9 @@ const toolbarHost = ref<HTMLElement | null>(null)
 let toolbarObserver: ResizeObserver | undefined
 const workspace = useWorkspaceStore()
 const message = useAppMessage()
-useTrayActions()
 const ui = useUiStore()
 const release = useReleaseStore()
+const theme = useThemeStore()
 const route = useRoute()
 const router = useRouter()
 const showSearch = computed(() => route.path !== '/settings')
@@ -31,6 +32,7 @@ watch(
   (next, previous) => {
     if (!previous || next === previous) return
     ui.projectDialog = false
+    ui.folderProjectsDialog = false
     ui.taskDialog = false
     ui.editingProject = null
     ui.editingTask = null
@@ -58,6 +60,14 @@ const selectedProject = computed(() =>
     ? workspace.projects.find((p) => p.id === route.query.project)
     : undefined,
 )
+useTrayActions(() => {
+  const project = selectedProject.value
+  const projectTasks =
+    project?.status === 'active' && !['files', 'links'].includes(String(route.query.view))
+  if (route.path !== '/tasks' && !projectTasks) return false
+  if (!ui.taskDialog) ui.newTask(projectTasks ? project!.id : null)
+  return true
+})
 const flatPage = computed(() => !!selectedProject.value || !['/', '/projects'].includes(route.path))
 const cardPage = computed(() =>
   selectedProject.value
@@ -150,8 +160,13 @@ onUnmounted(() => {
     <aside class="sidebar">
       <IconHint text="概览" :disabled="!compactSidebar"
         ><RouterLink to="/" class="brand" aria-label="WorkTodo"
-          ><span class="brand-symbol"><AppIcon name="brand" :size="23" /></span
-          ><span>WorkTodo</span></RouterLink
+          ><img
+            class="brand-symbol"
+            :src="theme.isDark ? '/app-icon.svg' : '/app-icon-light.svg'"
+            width="39"
+            height="39"
+            alt=""
+          /><span>WorkTodo</span></RouterLink
         ></IconHint
       >
       <nav aria-label="主导航">
@@ -264,6 +279,18 @@ onUnmounted(() => {
             >
               <AppIcon name="edit" :size="20" /></button
           ></IconHint>
+          <button
+            v-if="route.path === '/projects' && !selectedProject"
+            type="button"
+            class="icon-button"
+            aria-label="从文件夹创建项目"
+            :disabled="
+              !workspace.status.available || workspace.status.readOnly || workspace.sortingProjects
+            "
+            @click="ui.folderProjectsDialog = true"
+          >
+            <AppIcon name="folder" :size="20" />
+          </button>
           <IconHint text="新建项目" v-if="route.path === '/projects' && !selectedProject"
             ><button
               class="icon-button topbar-primary-action"

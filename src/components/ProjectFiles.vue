@@ -41,6 +41,10 @@ const loading = ref(false)
 const error = ref('')
 const search = ref('')
 const filter = ref('all')
+function resetFilters() {
+  search.value = ''
+  filter.value = 'all'
+}
 const page = ref(1)
 const pageSize = 50
 const dropArea = ref<HTMLElement>()
@@ -662,10 +666,15 @@ onBeforeUnmount(() => {
         />
       </div>
     </div>
-    <div v-if="!files.length && !loading && !error" class="file-drop-empty">
-      <span class="empty-icon"><AppIcon name="upload" :size="32" /></span>
-      <p>拖入文件，或点击添加文件</p>
-    </div>
+    <EmptyState
+      v-if="!files.length && !loading && !error"
+      class="file-drop-empty"
+      kind="files"
+      title="暂无文件"
+      action-label="点击添加"
+      :disabled="picking || working || deleting || !!workspace.status.readOnly"
+      @action="choose"
+    />
     <template v-else-if="visibleFiles.length">
       <div class="file-list" role="list" aria-label="文件列表">
         <article
@@ -756,7 +765,13 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </template>
-    <EmptyState v-else-if="files.length && !loading" icon="search" title="没有找到匹配的文件" />
+    <EmptyState
+      v-else-if="files.length && !loading"
+      kind="search"
+      title="没有找到匹配的文件"
+      action-label="点击清除筛选"
+      @action="resetFilters"
+    />
     <p v-if="dragging" class="file-drop-overlay">
       <AppIcon name="upload" :size="30" />松开即可添加
     </p>

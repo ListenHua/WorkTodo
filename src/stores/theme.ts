@@ -22,7 +22,19 @@ export const useThemeStore = defineStore('theme', () => {
   const isDark = computed(() => mode.value === 'dark')
   const naiveTheme = computed(() => (isDark.value ? appDarkTheme : null))
   const overrides = computed(() => (isDark.value ? darkThemeOverrides : themeOverrides))
-  watch(mode, (value) => applyThemeVariables(value), { immediate: true })
+  watch(
+    mode,
+    (value) => {
+      applyThemeVariables(value)
+      document
+        .querySelector<HTMLLinkElement>('link[rel="icon"]')
+        ?.setAttribute('href', value === 'dark' ? '/app-icon.svg' : '/app-icon-light.svg')
+      document
+        .querySelector('meta[name="theme-color"]')
+        ?.setAttribute('content', value === 'dark' ? '#111111' : '#f8f8f8')
+    },
+    { immediate: true },
+  )
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (event) => {
     systemDark.value = event.matches
   })

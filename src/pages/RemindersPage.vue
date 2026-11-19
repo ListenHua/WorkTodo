@@ -17,6 +17,15 @@ const ui = useUiStore()
 const message = useAppMessage()
 const items = ref<Reminder[]>([])
 const filter = ref('all')
+const hasFilters = computed(() => !!ui.search.trim() || filter.value !== 'all')
+function handleEmptyAction() {
+  if (hasFilters.value) {
+    ui.search = ''
+    filter.value = 'all'
+  } else {
+    ui.newTask()
+  }
+}
 const notificationStatus = ref<NotificationStatus | null>(null)
 const notificationError = ref('')
 const notificationBusy = ref(false)
@@ -188,8 +197,13 @@ onUnmounted(() => {
         >取消提醒</NButton
       ><NButton v-if="!item.readAt" text @click="action(item.id, 'read')">标记已读</NButton>
     </div>
-    <EmptyState v-if="!visibleItems.length" :title="items.length ? '没有匹配的提醒' : '暂无提醒'">
-      <NButton v-if="ui.search.trim()" @click="ui.search = ''">清除搜索</NButton>
-    </EmptyState>
+    <EmptyState
+      v-if="!visibleItems.length"
+      :kind="hasFilters ? 'search' : 'reminders'"
+      :title="hasFilters ? '没有匹配的提醒' : '暂无提醒'"
+      :action-label="hasFilters ? '点击清除筛选' : '点击新增'"
+      :disabled="!hasFilters && !!workspace.status.readOnly"
+      @action="handleEmptyAction"
+    />
   </section>
 </template>

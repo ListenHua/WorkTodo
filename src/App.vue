@@ -6,6 +6,7 @@ import { NConfigProvider, NGlobalStyle, NMessageProvider, zhCN, dateZhCN } from 
 import { useThemeStore } from './stores/theme'
 import AppShell from './components/AppShell.vue'
 import ProjectDialog from './components/ProjectDialog.vue'
+import FolderProjectsDialog from './components/FolderProjectsDialog.vue'
 import TaskDialog from './components/TaskDialog.vue'
 import { useWorkspaceStore } from './stores/workspace'
 import { useReleaseStore } from './stores/release'
@@ -43,6 +44,7 @@ onMounted(() => {
           :key="route.path === '/settings' ? 'settings' : workspace.status.bindingId || 'unbound'"
       /></AppShell>
       <ProjectDialog v-if="!quick" :key="`project-${workspace.status.bindingId}`" />
+      <FolderProjectsDialog v-if="!quick" :key="`folders-${workspace.status.bindingId}`" />
       <TaskDialog v-if="!quick" :key="`task-${workspace.status.bindingId}`" />
     </NMessageProvider>
   </NConfigProvider>
