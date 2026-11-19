@@ -15,7 +15,7 @@ artifacts/
 release-staging/
 release-downloads/
 
-# Local documentation and standalone tests
+# Exclude local-only notes and test artifacts
 /docs/
 /tests/
 /scripts/tests/

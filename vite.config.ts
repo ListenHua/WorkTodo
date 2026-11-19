@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config'
+import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
@@ -28,5 +28,4 @@ export default defineConfig({
   server: { port: 1420, strictPort: true },
   envPrefix: ['VITE_', 'TAURI_ENV_'],
   build: { target: 'es2021' },
-  test: { include: ['src/**/*.test.ts'], environment: 'node' },
 })

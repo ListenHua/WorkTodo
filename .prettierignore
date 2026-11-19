@@ -10,7 +10,7 @@ artifacts/
 release-downloads/
 release-staging/
 
-# Standalone tests and documentation are kept locally
+# Exclude local-only notes and test artifacts
 docs/
 tests/
 scripts/tests/
