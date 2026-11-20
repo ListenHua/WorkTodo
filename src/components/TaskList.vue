@@ -182,6 +182,7 @@ function overdue(task: Task) {
         workspace.projects.find((p) => p.id === task.projectId)?.status !== 'active' &&
         ['todo', 'doing'].includes(task.status)
       "
+      @mousedown.right.prevent
       @contextmenu="showContextMenu($event, task)"
       @keydown.shift.f10.prevent.stop="showContextMenu($event, task)"
       @keydown="$event.code === 'ContextMenu' && showContextMenu($event, task)"
@@ -196,6 +197,7 @@ function overdue(task: Task) {
   <TaskMasonry v-else :tasks="tasks" v-slot="{ task }">
     <article
       class="task-row task-card"
+      @mousedown.right.prevent
       @contextmenu="showContextMenu($event, task)"
       @keydown.shift.f10.prevent.stop="showContextMenu($event, task)"
       @keydown="$event.code === 'ContextMenu' && showContextMenu($event, task)"
