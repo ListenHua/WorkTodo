@@ -111,7 +111,7 @@ const projectOptions = computed(() => [
     <slot />
     <p v-if="error" class="form-error" role="alert">{{ error }}</p>
     <div class="dialog-footer task-dialog-footer">
-      <NButton :disabled="busy || disabled" @click="$emit('cancel')">取消</NButton>
+      <NButton attr-type="button" :disabled="busy" @click="$emit('cancel')">取消</NButton>
       <NButton type="primary" attr-type="submit" :disabled="disabled" :loading="busy"
         >保存待办</NButton
       >

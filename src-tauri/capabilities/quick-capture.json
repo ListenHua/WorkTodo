@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "quick-capture-window",
+  "description": "Allow the quick capture window to hide on cancel and reopen if its draft cannot be preserved.",
+  "windows": ["quick"],
+  "permissions": ["core:window:allow-hide", "core:window:allow-show"]
+}

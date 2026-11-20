@@ -70,6 +70,7 @@ const cleanups: (() => void)[] = []
 const draftReady = ref(false)
 let draftQueue = Promise.resolve()
 const draftError = ref('')
+const formError = computed(() => error.value || draftError.value)
 let draftTimer: ReturnType<typeof setTimeout> | undefined
 let pendingDraft: {
   value: string
@@ -124,29 +125,47 @@ watch(
   },
   { deep: true },
 )
-async function reloadDraft() {
-  const previous = bindingId
+let reloadingDraft: Promise<void> | null = null
+function reloadDraft(): Promise<void> {
+  if (reloadingDraft) return reloadingDraft
+  reloadingDraft = syncDraft().finally(() => {
+    reloadingDraft = null
+  })
+  return reloadingDraft
+}
+async function syncDraft() {
   await workspace.refresh()
   const next = workspace.status.bindingId || (desktop ? 'unbound' : null)
-  if (next !== previous) {
+  if (next === bindingId) return
+  draftReady.value = false
+  try {
     await flushDraft()
+    if (draftError.value.includes('本机暂存也失败')) throw new Error(draftError.value)
+    const draft = (await preferences.get('capture_draft')) || ''
+    const project = (await preferences.get('capture_project')) || ''
     bindingId = next
     suppressDraft = true
-    restoreDraft(
-      (await preferences.get('capture_draft')) || '',
-      (await preferences.get('capture_project')) || '',
-    )
+    restoreDraft(draft, project)
     await nextTick()
     suppressDraft = false
     clearImage()
     requestId = crypto.randomUUID()
+    error.value = ''
+    draftError.value = ''
     await selected()
+  } finally {
+    suppressDraft = false
+    draftReady.value = true
   }
 }
 async function hide() {
   await nextTick()
   await flushDraft()
-  await getCurrentWindow().hide()
+  try {
+    await getCurrentWindow().hide()
+  } catch (cause) {
+    error.value = errorMessage(cause)
+  }
 }
 async function removeImage() {
   try {
@@ -202,7 +221,7 @@ async function save() {
   try {
     await nextTick()
     await flushDraft()
-    if (draftError.value) throw new Error(draftError.value)
+    if (draftError.value) return
     const input = taskFormInput(form.value, hasImage.value)
     if (desktop) {
       await invoke('capture_save', {
@@ -310,6 +329,10 @@ onMounted(async () => {
     else cleanups.push(closing)
     const focus = await getCurrentWindow().onFocusChanged(({ payload }) => {
       if (!payload) void flushDraft()
+      else
+        void reloadDraft().catch((cause) => {
+          error.value = errorMessage(cause)
+        })
     })
     if (gone) focus()
     else cleanups.push(focus)
@@ -354,7 +377,7 @@ onUnmounted(() => {
       v-model="form"
       :busy="busy"
       :disabled="!draftReady"
-      :error="error"
+      :error="formError"
       @submit="save"
       @cancel="desktop ? hide() : discard()"
     >
@@ -364,7 +387,6 @@ onUnmounted(() => {
         <NButton v-if="hasImage" :disabled="busy" @click="removeImage">移除图片</NButton>
         <NButton :disabled="busy || !draftReady" @click="discard">放弃草稿</NButton>
       </div>
-      <p v-if="draftError" class="form-error" role="alert">{{ draftError }}</p>
     </TaskForm>
   </main>
 </template>
