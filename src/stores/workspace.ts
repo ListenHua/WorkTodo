@@ -15,6 +15,7 @@ import type {
   Project,
   Task,
   WorkspaceStatus,
+  TrashRequest,
 } from '../shared/types'
 
 export const useWorkspaceStore = defineStore('workspace', () => {
@@ -128,6 +129,12 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     await refresh()
     if (desktop) void emit('workspace-changed')
   }
+  async function manageTrash(request: TrashRequest) {
+    const result = await api.manageTrash(request)
+    await refresh()
+    if (desktop) void emit('workspace-changed')
+    return result
+  }
   async function updateProject(id: string, input: CreateProject) {
     const old = projects.value.find((p) => p.id === id)
     if (
@@ -224,6 +231,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     toggleTask,
     updateTask,
     trashTask,
+    manageTrash,
     updateProject,
     deleteProject,
     setProjectStatus,

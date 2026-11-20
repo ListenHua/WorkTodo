@@ -1,6 +1,6 @@
 use crate::{
     error::{AppError, AppResult},
-    models::{CreateTask, Task, UpdateTask},
+    models::{CreateTask, Task, TrashAction, TrashFailure, TrashRequest, TrashResult, UpdateTask},
 };
 use chrono::{NaiveDate, Utc};
 use rusqlite::{params, Connection};
@@ -181,6 +181,8 @@ pub fn trash(connection: &Connection, id: &str, restore: bool) -> AppResult<()> 
             "UPDATE reminders SET state='dismissed' WHERE task_id=?1 AND state='pending'",
             [id],
         )?;
+    } else {
+        dismiss_past_reminders(&transaction, id)?;
     }
     transaction.commit()?;
     Ok(())
@@ -258,9 +260,26 @@ pub fn restore(connection: &mut Connection, id: &str, to_inbox: bool) -> AppResu
         .into_iter()
         .find(|t| t.id == id && t.deleted_at.is_some())
         .ok_or_else(|| AppError::new("TASK_NOT_FOUND", "回收站中没有此待办"))?;
+    let missing: bool = connection.query_row(
+        "SELECT project_id IS NOT NULL AND NOT EXISTS(
+            SELECT 1 FROM projects WHERE id=tasks.project_id) FROM tasks WHERE id=?1",
+        [id],
+        |row| row.get(0),
+    )?;
+    if missing {
+        let transaction = connection.transaction()?;
+        transaction.execute("DELETE FROM task_files WHERE task_id=?1", [id])?;
+        transaction.execute(
+            "UPDATE tasks SET deleted_at=NULL,project_id=NULL,updated_at=?2 WHERE id=?1",
+            params![id, Utc::now().to_rfc3339()],
+        )?;
+        dismiss_past_reminders(&transaction, id)?;
+        transaction.commit()?;
+        return Ok(());
+    }
     let archived = if let Some(project) = &task.project_id {
         connection.query_row(
-            "SELECT status!='active' FROM projects WHERE id=?1",
+            "SELECT EXISTS(SELECT 1 FROM projects WHERE id=?1 AND status!='active')",
             [project],
             |r| r.get::<_, bool>(0),
         )?
@@ -289,6 +308,87 @@ pub fn restore(connection: &mut Connection, id: &str, to_inbox: bool) -> AppResu
             params![id, file],
         )?;
     }
+    dismiss_past_reminders(&transaction, id)?;
     transaction.commit()?;
     Ok(())
+}
+
+fn dismiss_past_reminders(connection: &Connection, id: &str) -> AppResult<()> {
+    connection.execute(
+        "UPDATE reminders SET state='dismissed' WHERE task_id=?1 AND state='pending'
+         AND julianday(remind_at)<=julianday('now')",
+        [id],
+    )?;
+    Ok(())
+}
+
+/// Manage only the explicit trash snapshot confirmed by the user. Files remain untouched on purge.
+pub fn manage_trash(connection: &mut Connection, input: TrashRequest) -> AppResult<TrashResult> {
+    let mut seen = std::collections::HashSet::new();
+    let mut result = TrashResult::default();
+    let mut targets = Vec::new();
+    for id in input.ids {
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        let deleted: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM tasks WHERE id=?1 AND deleted_at IS NOT NULL)",
+            [&id],
+            |row| row.get(0),
+        )?;
+        if deleted {
+            targets.push(id);
+        } else {
+            result.failed.push(TrashFailure {
+                id,
+                message: "待办已恢复或不在回收站中".into(),
+            });
+        }
+    }
+    match input.action {
+        TrashAction::Purge => {
+            let transaction = connection.transaction()?;
+            for id in &targets {
+                transaction.execute("DELETE FROM task_files WHERE task_id=?1", [id])?;
+                transaction.execute("DELETE FROM reminders WHERE task_id=?1", [id])?;
+                transaction.execute(
+                    "DELETE FROM tasks WHERE id=?1 AND deleted_at IS NOT NULL",
+                    [id],
+                )?;
+            }
+            transaction.commit()?;
+            result.succeeded_ids = targets;
+        }
+        TrashAction::Restore => {
+            for id in targets {
+                let rehome: bool = connection.query_row(
+                    "SELECT project_id IS NOT NULL AND
+                     (NOT EXISTS(SELECT 1 FROM projects WHERE id=tasks.project_id) OR
+                      (status IN ('todo','doing') AND NOT EXISTS(
+                        SELECT 1 FROM projects WHERE id=tasks.project_id AND status='active')))
+                     FROM tasks WHERE id=?1",
+                    [&id],
+                    |row| row.get(0),
+                )?;
+                let missing: bool = connection.query_row(
+                    "SELECT project_id IS NOT NULL AND NOT EXISTS(
+                       SELECT 1 FROM projects WHERE id=tasks.project_id) FROM tasks WHERE id=?1",
+                    [&id],
+                    |row| row.get(0),
+                )?;
+                match restore(
+                    connection,
+                    &id,
+                    missing || (rehome && input.restore_to_inbox),
+                ) {
+                    Ok(()) => result.succeeded_ids.push(id),
+                    Err(error) => result.failed.push(TrashFailure {
+                        id,
+                        message: error.message,
+                    }),
+                }
+            }
+        }
+    }
+    Ok(result)
 }

@@ -180,3 +180,32 @@ impl Default for DesktopSettings {
         }
     }
 }
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrashRequest {
+    pub ids: Vec<String>,
+    pub action: TrashAction,
+    pub binding_id: String,
+    pub restore_to_inbox: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TrashAction {
+    Restore,
+    Purge,
+}
+
+#[derive(Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrashResult {
+    pub succeeded_ids: Vec<String>,
+    pub failed: Vec<TrashFailure>,
+}
+
+#[derive(Serialize)]
+pub struct TrashFailure {
+    pub id: String,
+    pub message: String,
+}

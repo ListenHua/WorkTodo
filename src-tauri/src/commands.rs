@@ -426,6 +426,19 @@ pub async fn tasks_trash(
 }
 
 #[tauri::command]
+pub async fn tasks_manage_trash(
+    state: State<'_, AppState>,
+    input: TrashRequest,
+) -> AppResult<TrashResult> {
+    let bootstrap = state.db_path.clone();
+    blocking(state.db_path.clone(), move |db| {
+        crate::portable::require_binding(&bootstrap, Some(&input.binding_id))?;
+        services::tasks::manage_trash(db, input)
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn projects_update(
     state: State<'_, AppState>,
     id: String,

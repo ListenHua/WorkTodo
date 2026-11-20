@@ -104,6 +104,7 @@ pub fn run() {
             commands::tasks_create_full,
             commands::tasks_update,
             commands::tasks_trash,
+            commands::tasks_manage_trash,
             commands::projects_update,
             commands::projects_delete,
             commands::projects_open_link,

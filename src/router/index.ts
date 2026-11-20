@@ -34,7 +34,7 @@ export const router = createRouter({
     },
     {
       path: '/trash',
-      component: () => import('../pages/TasksPage.vue'),
+      component: () => import('../pages/TrashPage.vue'),
       meta: { title: '回收站', filter: 'trash' },
     },
     {

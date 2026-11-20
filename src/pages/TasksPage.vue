@@ -70,7 +70,6 @@ function reset() {
   <section class="panel">
     <div class="list-toolbar task-toolbar">
       <NSelect
-        v-if="route.meta.filter !== 'trash'"
         v-model:value="filters.status"
         aria-label="状态筛选"
         :options="[
@@ -140,20 +139,9 @@ function reset() {
     <EmptyState
       v-else
       :kind="hasFilters ? 'search' : 'tasks'"
-      :title="
-        hasFilters
-          ? route.meta.filter === 'trash'
-            ? '没有匹配的回收站内容'
-            : '没有匹配的待办'
-          : route.meta.filter === 'trash'
-            ? '回收站为空'
-            : '暂无待办事项'
-      "
-      :action-label="
-        hasFilters ? '点击清除筛选' : route.meta.filter === 'trash' ? '点击查看待办' : '点击新增'
-      "
-      :action-to="!hasFilters && route.meta.filter === 'trash' ? '/tasks' : undefined"
-      :disabled="!hasFilters && route.meta.filter !== 'trash' && !!workspace.status.readOnly"
+      :title="hasFilters ? '没有匹配的待办' : '暂无待办事项'"
+      :action-label="hasFilters ? '点击清除筛选' : '点击新增'"
+      :disabled="!hasFilters && !!workspace.status.readOnly"
       @action="hasFilters ? reset() : ui.newTask()"
     />
   </section>

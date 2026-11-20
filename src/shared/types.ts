@@ -46,6 +46,16 @@ export interface Task {
   dueAt?: string | null
   deletedAt?: string | null
 }
+export interface TrashRequest {
+  ids: string[]
+  action: 'restore' | 'purge'
+  bindingId: string
+  restoreToInbox: boolean
+}
+export interface TrashResult {
+  succeededIds: string[]
+  failed: { id: string; message: string }[]
+}
 export interface ProjectDirectoryMerge {
   path: string
   fingerprint: string
@@ -93,6 +103,7 @@ export interface WorkspaceApi {
   createFullTask(input: UpdateTask): Promise<Task>
   updateTask(id: string, input: UpdateTask): Promise<Task>
   trashTask(id: string, restore: boolean, toInbox?: boolean): Promise<void>
+  manageTrash(request: TrashRequest): Promise<TrashResult>
   updateProject(id: string, input: CreateProject): Promise<Project>
   deleteProject(id: string, deleteFiles?: boolean): Promise<void>
   setProjectPinned(id: string, pinned: boolean): Promise<void>

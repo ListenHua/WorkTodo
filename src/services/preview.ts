@@ -5,9 +5,10 @@ import type {
   Task,
   WorkspaceApi,
   WorkspaceStatus,
+  TrashResult,
 } from '../shared/types'
 import { normalizePriority } from '../shared/task-priority'
-import { cancelPreviewReminders } from './preview-reminders-state'
+import { cancelPreviewReminders, previewReminders } from './preview-reminders-state'
 import { validateProjectName } from '../shared/domain'
 import { validateProjectLinks } from '../shared/project-links'
 import { validateProjectTags } from '../shared/project-tags'
@@ -100,6 +101,52 @@ export function createPreviewApi(): WorkspaceApi {
       task.deletedAt = restore ? null : new Date().toISOString()
       if (!restore) cancelPreviewReminders(task.id)
       if (restore && toInbox) task.projectId = null
+    },
+    async manageTrash(input) {
+      const { attachments } = await import('./attachments')
+      const result: TrashResult = { succeededIds: [], failed: [] }
+      for (const id of new Set(input.ids)) {
+        const index = tasks.findIndex((task) => task.id === id && task.deletedAt)
+        if (index < 0) {
+          result.failed.push({ id, message: '待办已恢复或不在回收站中' })
+          continue
+        }
+        const task = tasks[index]!
+        if (input.action === 'purge') {
+          tasks.splice(index, 1)
+          attachments.forgetPreview(id)
+          for (let i = previewReminders.length - 1; i >= 0; i--) {
+            if (previewReminders[i]!.taskId === id) previewReminders.splice(i, 1)
+          }
+        } else {
+          const project = projects.find((project) => project.id === task.projectId)
+          const inactive =
+            !!task.projectId &&
+            project?.status !== 'active' &&
+            ['todo', 'doing'].includes(task.status)
+          if (inactive && project && !input.restoreToInbox) {
+            result.failed.push({ id, message: '原项目已归档，请恢复为无项目' })
+            continue
+          }
+          if (task.projectId && (!project || inactive)) {
+            try {
+              if (project) await attachments.movePreview(id, null)
+              else attachments.forgetPreview(id)
+            } catch (cause) {
+              result.failed.push({
+                id,
+                message: cause instanceof Error ? cause.message : '附件恢复失败',
+              })
+              continue
+            }
+            task.projectId = null
+          }
+          task.deletedAt = null
+          cancelPreviewReminders(id)
+        }
+        result.succeededIds.push(id)
+      }
+      return result
     },
     async updateProject(id, input) {
       const project = projects.find((p) => p.id === id)
