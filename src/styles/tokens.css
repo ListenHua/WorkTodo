@@ -30,6 +30,9 @@
   --preview-text: #737373;
   --preview-background: #f0f0f0;
   --card-hover-shadow: 0 8px 22px #00000010;
+  --scrollbar-thumb: #00000026;
+  --scrollbar-thumb-hover: #00000045;
+  --scrollbar-thumb-active: #00000066;
 }
 
 :root.dark {
@@ -57,6 +60,9 @@
   --preview-text: #a3a3a3;
   --preview-background: #1f1f1f;
   --card-hover-shadow: 0 8px 22px #00000030;
+  --scrollbar-thumb: #ffffff33;
+  --scrollbar-thumb-hover: #ffffff52;
+  --scrollbar-thumb-active: #ffffff73;
 }
 
 @media (max-width: 760px) {

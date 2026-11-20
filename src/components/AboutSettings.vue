@@ -114,8 +114,10 @@ async function copyInfo() {
       </article>
       <details v-for="entry in history" :key="entry.version" class="release-history">
         <summary>
-          <span>v{{ entry.version }}</span
-          ><time>{{ entry.date }}</time>
+          <span class="release-history-heading">
+            <span>v{{ entry.version }}</span
+            ><time>{{ entry.date }}</time>
+          </span>
         </summary>
         <article class="release-entry">
           <template v-for="[key, label] in releaseCategoriesFor(entry.version)" :key="key"

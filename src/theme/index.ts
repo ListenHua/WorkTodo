@@ -43,6 +43,14 @@ const sharedOverrides: GlobalThemeOverrides = {
     textColorDisabledPrimary: '#FFFFFF',
   },
   Card: { borderRadius: '12px' },
+  Scrollbar: {
+    width: '6px',
+    height: '6px',
+    borderRadius: '999px',
+    color: 'var(--scrollbar-thumb)',
+    colorHover: 'var(--scrollbar-thumb-hover)',
+    railColor: 'transparent',
+  },
   Checkbox: { checkMarkColor: '#FFFFFF' },
 }
 

@@ -1,4 +1,5 @@
 @import url('./tokens.css');
+@import url('./scrollbars.css');
 
 * {
   box-sizing: border-box;
@@ -2089,8 +2090,7 @@ a.metric-card:focus-visible {
 .release-entry {
   padding: 8px 0 24px;
 }
-.release-heading,
-.release-history summary {
+.release-heading {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -2131,15 +2131,17 @@ a.metric-card:focus-visible {
   margin-top: 16px;
 }
 .release-history summary {
-  cursor: pointer;
+  display: list-item;
   padding: 10px 0;
+  list-style-position: inside;
+  cursor: pointer;
 }
-.release-history summary::before {
-  content: '›';
-  transition: transform 0.15s;
-}
-.release-history[open] summary::before {
-  transform: rotate(90deg);
+.release-history-heading {
+  display: inline-flex;
+  width: calc(100% - 22px);
+  align-items: center;
+  gap: 10px;
+  vertical-align: middle;
 }
 .release-drawer-header {
   display: flex;

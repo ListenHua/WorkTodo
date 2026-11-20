@@ -22,9 +22,9 @@
   --chart-created: #999;
   display: grid;
   flex: 1;
-  grid-template-rows: 110px minmax(280px, 1.05fr) minmax(240px, 0.95fr);
+  grid-template-rows: 110px minmax(240px, 1.05fr) minmax(200px, 0.95fr);
   gap: 18px;
-  min-height: 666px;
+  min-height: 586px;
   min-width: 0;
 }
 .dashboard .metric-grid {
@@ -364,8 +364,6 @@
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
 }
 .dashboard-list-body > .empty-state {
   display: flex;
@@ -531,15 +529,5 @@
   .dashboard *::before,
   .dashboard *::after {
     transition: none !important;
-  }
-}
-
-@media (min-width: 1001px) and (max-height: 840px) {
-  .main-column.overview-layout {
-    height: auto;
-  }
-  .dashboard {
-    flex: none;
-    height: 666px;
   }
 }
