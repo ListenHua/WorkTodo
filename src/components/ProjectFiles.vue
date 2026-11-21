@@ -14,6 +14,7 @@ import {
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { emit } from '@tauri-apps/api/event'
 import { useAppMessage } from '../composables/useAppMessage'
+import { useModalState } from '../composables/useModalState'
 import { desktop } from '../services/api'
 import { filesApi, fileVersions } from '../services/files'
 import { errorMessage } from '../shared/domain'
@@ -116,7 +117,13 @@ const contextVersion = ref(0)
 const contextFile = ref<ProjectFile>()
 let contextRow: HTMLElement | undefined
 const contextPosition = ref({ x: 0, y: 0 })
-const deleteTargets = ref<ProjectFile[]>([])
+const {
+  show: deleteVisible,
+  data: deleteTargets,
+  open: openDelete,
+  close: closeDelete,
+  afterLeave: clearDeleteTargets,
+} = useModalState<ProjectFile[]>(() => [])
 const deleteMode = ref<'single' | 'batch'>('single')
 const deleteFailures = ref<{ file: ProjectFile; error: string }[]>([])
 const deleteProgress = ref(0)
@@ -138,14 +145,19 @@ function requestDelete(targets: ProjectFile[], mode: 'single' | 'batch') {
   if (busy.value || !targets.length) return
   closeContextMenu()
   deleteMode.value = mode
-  deleteTargets.value = [...targets]
+  openDelete([...targets])
   deleteFailures.value = []
   deleteProgress.value = 0
 }
 function dismissDelete() {
   if (deleting.value) return
-  deleteTargets.value = []
+  closeDelete()
+}
+function afterDeleteLeave() {
+  if (deleteVisible.value) return
+  clearDeleteTargets()
   deleteFailures.value = []
+  deleteProgress.value = 0
 }
 const menuIcon = (name: string) => () => h(AppIcon, { name, size: 18 })
 const contextOptions = computed(() => {
@@ -206,7 +218,7 @@ function selectContextAction(key: string) {
   if (key === 'delete') requestDelete([file], 'single')
 }
 async function confirmDelete() {
-  if (!deleteTargets.value.length || busy.value) return
+  if (!deleteVisible.value || !deleteTargets.value.length || busy.value) return
   const targets = [...deleteTargets.value]
   const removed = new Set<string>()
   const failures: { file: ProjectFile; error: string }[] = []
@@ -231,8 +243,10 @@ async function confirmDelete() {
     if (disposed) return
     files.value = files.value.filter((file) => !removed.has(file.id))
     if (previewFile.value && removed.has(previewFile.value.id)) previewVisible.value = false
-    deleteTargets.value = failures.map(({ file }) => file)
-    deleteFailures.value = failures
+    if (failures.length) {
+      deleteTargets.value = failures.map(({ file }) => file)
+      deleteFailures.value = failures
+    } else closeDelete()
     if (deleteMode.value === 'batch' && !failures.length) {
       selecting.value = false
       selectedIds.value = new Set()
@@ -464,11 +478,15 @@ function clearPreviewUrl() {
   previewUrl.value = ''
 }
 watch(previewVisible, (show) => {
-  if (!show) {
-    previewRequest++
-    clearPreviewUrl()
-  }
+  if (!show) previewRequest++
 })
+function afterPreviewLeave() {
+  if (previewVisible.value) return
+  clearPreviewUrl()
+  previewFile.value = undefined
+  previewLoading.value = false
+  previewError.value = ''
+}
 async function preview(file: ProjectFile) {
   const request = ++previewRequest
   clearPreviewUrl()
@@ -481,9 +499,10 @@ async function preview(file: ProjectFile) {
     if (!disposed && previewVisible.value && request === previewRequest)
       previewUrl.value = URL.createObjectURL(blob)
   } catch (cause) {
-    if (!disposed && request === previewRequest) previewError.value = errorMessage(cause)
+    if (!disposed && previewVisible.value && request === previewRequest)
+      previewError.value = errorMessage(cause)
   } finally {
-    if (request === previewRequest) previewLoading.value = false
+    if (request === previewRequest && previewVisible.value) previewLoading.value = false
   }
 }
 async function open(file: ProjectFile, reveal = false) {
@@ -797,7 +816,8 @@ onBeforeUnmount(() => {
     @update:show="contextVisible = $event"
   />
   <NModal
-    :show="!!deleteTargets.length"
+    :show="deleteVisible"
+    @after-leave="afterDeleteLeave"
     preset="dialog"
     :title="deleteTitle"
     :aria-label="deleteTitle"
@@ -859,6 +879,7 @@ onBeforeUnmount(() => {
   </NModal>
   <NModal
     v-model:show="previewVisible"
+    @after-leave="afterPreviewLeave"
     preset="card"
     :title="previewFile?.name"
     :bordered="false"

@@ -2,6 +2,7 @@
 import { compareTaskPriority } from '../shared/task-priority'
 import IconHint from '../components/IconHint.vue'
 import { useAppMessage } from '../composables/useAppMessage'
+import { useModalState } from '../composables/useModalState'
 import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Project } from '../shared/types'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
@@ -73,7 +74,13 @@ const visibleProjects = computed(() => {
 })
 const selected = computed(() => workspace.projects.find((p) => p.id === route.query.project))
 const contextProject = ref<Project | null>(null)
-const deleteTarget = ref<Project | null>(null)
+const {
+  show: deleteVisible,
+  data: deleteTarget,
+  open: openDelete,
+  close: closeDelete,
+  afterLeave: clearDelete,
+} = useModalState<Project | null>(() => null)
 const deleting = ref(false)
 const deleteFiles = ref(false)
 watch(deleteTarget, () => {
@@ -151,7 +158,7 @@ function selectContextAction(key: string) {
   if (project) {
     if (sorting.value) return
     if (key === 'open') void router.push({ path: '/projects', query: { project: project.id } })
-    if (key === 'delete' && workspace.status.available) deleteTarget.value = project
+    if (key === 'delete' && workspace.status.available) openDelete(project)
     if (key === 'edit' && !workspace.status.readOnly) ui.editProject(project)
     return
   }
@@ -159,11 +166,11 @@ function selectContextAction(key: string) {
   if (key === 'create') ui.newProject()
 }
 async function confirmDeleteProject() {
-  if (!deleteTarget.value || deleting.value) return
+  if (!deleteVisible.value || !deleteTarget.value || deleting.value) return
   deleting.value = true
   try {
     await workspace.deleteProject(deleteTarget.value.id, deleteFiles.value)
-    deleteTarget.value = null
+    closeDelete()
     message.success('项目已删除')
   } catch (cause) {
     message.error(errorMessage(cause))
@@ -451,7 +458,8 @@ const projectTasks = computed(() =>
     />
   </section>
   <NModal
-    :show="!!deleteTarget"
+    :show="deleteVisible"
+    @after-leave="clearDelete"
     preset="dialog"
     title="删除项目"
     aria-label="删除项目"
@@ -461,7 +469,7 @@ const projectTasks = computed(() =>
     :close-on-esc="!deleting"
     @update:show="
       (show) => {
-        if (!show) deleteTarget = null
+        if (!show && !deleting) closeDelete()
       }
     "
   >
@@ -475,7 +483,7 @@ const projectTasks = computed(() =>
       项目文件夹及其中的数据与文件将永久删除，无法通过回收站恢复。
     </p>
     <template #action>
-      <NButton :disabled="deleting" @click="deleteTarget = null">取消</NButton>
+      <NButton :disabled="deleting" @click="closeDelete">取消</NButton>
       <NButton type="error" :loading="deleting" @click="confirmDeleteProject">删除项目</NButton>
     </template>
   </NModal>

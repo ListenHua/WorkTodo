@@ -4,6 +4,7 @@ import { NButton, NCheckbox, NDropdown, NModal, NSelect, NSkeleton } from 'naive
 import { useWorkspaceStore } from '../stores/workspace'
 import { useUiStore } from '../stores/ui'
 import { useAppMessage } from '../composables/useAppMessage'
+import { useModalState } from '../composables/useModalState'
 import { errorMessage, localDate } from '../shared/domain'
 import type { Task, TrashRequest } from '../shared/types'
 import AppIcon from '../components/AppIcon.vue'
@@ -56,9 +57,15 @@ const allSelected = computed(
 )
 const selectedTasks = computed(() => filtered.value.filter((task) => selected.value.has(task.id)))
 const busy = ref(false)
-const confirmation = ref<
-  (TrashRequest & { title: string; description: string; button: string }) | null
->(null)
+const {
+  show: confirmationVisible,
+  data: confirmation,
+  open: openConfirmation,
+  close: closeConfirmation,
+  afterLeave: clearConfirmation,
+} = useModalState<(TrashRequest & { title: string; description: string; button: string }) | null>(
+  () => null,
+)
 const operationError = ref('')
 const failures = ref<{ title: string; message: string }[]>([])
 const failureSummary = ref('')
@@ -143,7 +150,7 @@ function requestAction(action: TrashRequest['action'], tasks: Task[], clear = fa
     void execute(input)
     return
   }
-  confirmation.value = {
+  openConfirmation({
     ...input,
     title: action === 'restore' ? '恢复待办' : clear ? '清空回收站' : '彻底删除待办',
     button: action === 'restore' ? '恢复' : clear ? '清空回收站' : '彻底删除',
@@ -155,7 +162,7 @@ function requestAction(action: TrashRequest['action'], tasks: Task[], clear = fa
           : tasks.length === 1
             ? `彻底删除“${tasks[0]!.title}”？删除后无法恢复，本地附件文件将保留。`
             : `彻底删除选中的 ${tasks.length} 项待办？删除后无法恢复，本地附件文件将保留。`,
-  }
+  })
 }
 async function execute(input: TrashRequest) {
   if (busy.value || readonly.value) return
@@ -167,7 +174,7 @@ async function execute(input: TrashRequest) {
   try {
     const result = await workspace.manageTrash(input)
     if ((workspace.status.bindingId || 'unbound') !== input.bindingId) return
-    confirmation.value = null
+    closeConfirmation()
     const verb = input.action === 'restore' ? '恢复' : '彻底删除'
     if (result.failed.length) {
       failures.value = result.failed.map((failure) => ({
@@ -194,7 +201,7 @@ watch(filtered, (tasks) => {
 watch(
   () => workspace.status.bindingId,
   () => {
-    confirmation.value = null
+    closeConfirmation()
     selecting.value = false
     selected.value = new Set()
     operationError.value = ''
@@ -205,7 +212,7 @@ watch(
 )
 watch(readonly, (value) => {
   if (value && !busy.value) {
-    confirmation.value = null
+    closeConfirmation()
     exitSelection()
   }
 })
@@ -407,7 +414,8 @@ onBeforeUnmount(() => {
       @update:show="context.show = $event"
     />
     <NModal
-      :show="!!confirmation"
+      :show="confirmationVisible"
+      @after-leave="clearConfirmation"
       preset="card"
       :title="confirmation?.title"
       style="width: min(440px, calc(100vw - 32px))"
@@ -416,19 +424,19 @@ onBeforeUnmount(() => {
       :close-on-esc="!busy"
       @update:show="
         (show) => {
-          if (!show && !busy) confirmation = null
+          if (!show && !busy) closeConfirmation()
         }
       "
     >
       <p class="trash-confirmation">{{ confirmation?.description }}</p>
       <p v-if="operationError" class="form-error" role="alert">{{ operationError }}</p>
       <template #action>
-        <NButton :disabled="busy" @click="confirmation = null">取消</NButton>
+        <NButton :disabled="busy" @click="closeConfirmation">取消</NButton>
         <NButton
           :type="confirmation?.action === 'restore' ? 'success' : 'error'"
           :loading="busy"
           :disabled="readonly"
-          @click="confirmation && execute(confirmation)"
+          @click="confirmationVisible && confirmation && execute(confirmation)"
           >{{ confirmation?.button }}</NButton
         >
       </template>

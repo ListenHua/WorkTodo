@@ -73,10 +73,13 @@ watch(
   },
   { flush: 'sync' },
 )
-watch(show, () => {
+watch(show, (visible) => {
   ++extraction
-  extracting.value = false
+  if (visible) extracting.value = false
 })
+function afterLeave() {
+  if (!show.value) extracting.value = false
+}
 onBeforeUnmount(() => {
   ++extraction
   cancelSort()
@@ -100,7 +103,7 @@ async function extractIcon() {
   } catch (cause) {
     if (request === extraction && show.value) iconError.value = errorMessage(cause)
   } finally {
-    if (request === extraction) extracting.value = false
+    if (request === extraction && show.value) extracting.value = false
   }
 }
 function chooseIcon(value: ProjectLink['icon']) {
@@ -408,6 +411,7 @@ async function open(link: ProjectLink) {
   </section>
   <NModal
     v-model:show="show"
+    @after-leave="afterLeave"
     preset="card"
     :title="editingId ? '编辑链接' : '添加链接'"
     :aria-label="editingId ? '编辑链接' : '添加链接'"

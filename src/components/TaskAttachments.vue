@@ -18,6 +18,8 @@ const picked = ref<string | null>(null)
 const input = ref<HTMLInputElement>()
 const busy = ref(false)
 let gone = false
+const previewVisible = ref(false)
+let previewRequest = 0
 const preview = ref('')
 const previewName = ref('')
 const options = computed(() =>
@@ -66,6 +68,14 @@ async function upload(event: Event) {
     for (const file of chosen) await attachments.import(props.taskId, { kind: 'browser', file })
   }, `已添加 ${chosen.length} 个附件`)
 }
+watch(previewVisible, (show) => {
+  if (!show) previewRequest++
+})
+function afterPreviewLeave() {
+  if (previewVisible.value) return
+  clearPreview()
+  previewName.value = ''
+}
 function clearPreview() {
   if (preview.value) URL.revokeObjectURL(preview.value)
   preview.value = ''
@@ -73,11 +83,13 @@ function clearPreview() {
 async function open(file: ProjectFile) {
   try {
     if (canPreviewFile(file)) {
-      clearPreview()
+      const request = ++previewRequest
       const blob = await filesApi.preview(file.projectId, file)
-      if (gone) return
+      if (gone || request !== previewRequest) return
+      clearPreview()
       preview.value = URL.createObjectURL(blob)
       previewName.value = file.name
+      previewVisible.value = true
     } else {
       await filesApi.open(file.projectId, file.id, false)
     }
@@ -87,6 +99,7 @@ async function open(file: ProjectFile) {
 }
 onUnmounted(() => {
   gone = true
+  previewRequest++
   clearPreview()
 })
 </script>
@@ -135,15 +148,20 @@ onUnmounted(() => {
     />
   </div>
   <NModal
-    :show="!!preview"
+    v-model:show="previewVisible"
+    @after-leave="afterPreviewLeave"
     preset="card"
     :title="previewName"
     :bordered="false"
     :closable="false"
     class="form-modal"
-    @update:show="clearPreview"
     ><template #header-extra
-      ><button type="button" class="icon-button" aria-label="关闭预览" @click="clearPreview">
+      ><button
+        type="button"
+        class="icon-button"
+        aria-label="关闭预览"
+        @click="previewVisible = false"
+      >
         <AppIcon name="close" :size="20" /></button></template
     ><img
       :src="preview"

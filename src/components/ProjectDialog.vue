@@ -2,6 +2,7 @@
 import IconHint from './IconHint.vue'
 import AppIcon from './AppIcon.vue'
 import { useAppMessage } from '../composables/useAppMessage'
+import { useModalState } from '../composables/useModalState'
 import { ref, watch } from 'vue'
 import { NButton, NModal, NInput, NSelect } from 'naive-ui'
 import { useUiStore } from '../stores/ui'
@@ -24,11 +25,17 @@ const status = ref<Project['status']>('active')
 const pendingPolicy = ref<'inbox' | 'complete' | 'cancel'>('inbox')
 const busy = ref(false)
 const error = ref('')
-const pendingMerge = ref<{ directory: ProjectDirectoryConflict; input: CreateProject } | null>(null)
+const {
+  show: mergeVisible,
+  data: pendingMerge,
+  open: openMerge,
+  close: closeMerge,
+  afterLeave: clearMerge,
+} = useModalState<{ directory: ProjectDirectoryConflict; input: CreateProject } | null>(() => null)
 watch(
   () => [ui.projectDialog, ui.editingProject?.id] as const,
   ([open]) => {
-    pendingMerge.value = null
+    closeMerge()
     if (open) {
       name.value = ui.editingProject?.name || ''
       description.value = ui.editingProject?.description || ''
@@ -68,15 +75,15 @@ async function persist(input: CreateProject) {
       : input.directoryMerge
         ? '项目已合并创建'
         : '项目已创建'
-    pendingMerge.value = null
+    closeMerge()
     ui.projectDialog = false
     message.success(text)
   } catch (cause) {
     const directory = !ui.editingProject && projectDirectoryConflict(cause)
     if (directory) {
-      pendingMerge.value = { directory, input }
+      openMerge({ directory, input })
     } else {
-      pendingMerge.value = null
+      closeMerge()
       error.value = errorMessage(cause)
     }
   } finally {
@@ -85,7 +92,7 @@ async function persist(input: CreateProject) {
 }
 async function confirmMerge() {
   const pending = pendingMerge.value
-  if (!pending || busy.value) return
+  if (!mergeVisible.value || !pending || busy.value) return
   await persist({
     ...pending.input,
     name: pending.directory.name,
@@ -102,7 +109,7 @@ async function confirmMerge() {
     :aria-label="ui.editingProject ? '编辑项目' : '新建项目'"
     :bordered="false"
     :mask-closable="false"
-    :close-on-esc="!busy && !pendingMerge"
+    :close-on-esc="!busy && !mergeVisible"
     :closable="false"
   >
     <template #header-extra>
@@ -203,7 +210,8 @@ async function confirmMerge() {
     </form></NModal
   >
   <NModal
-    :show="!!pendingMerge"
+    :show="mergeVisible"
+    @after-leave="clearMerge"
     preset="card"
     title="同名文件夹已存在"
     aria-label="合并已有文件夹"
@@ -214,7 +222,7 @@ async function confirmMerge() {
     :close-on-esc="!busy"
     @update:show="
       (show) => {
-        if (!show && !busy) pendingMerge = null
+        if (!show && !busy) closeMerge()
       }
     "
   >
@@ -224,7 +232,7 @@ async function confirmMerge() {
         class="icon-button"
         aria-label="关闭合并确认"
         :disabled="busy"
-        @click="pendingMerge = null"
+        @click="closeMerge"
       >
         <AppIcon name="close" :size="20" />
       </button>
@@ -243,7 +251,7 @@ async function confirmMerge() {
         项目名称使用文件夹名称：{{ pendingMerge.directory.name }}
       </p>
       <div class="dialog-footer">
-        <NButton :disabled="busy" @click="pendingMerge = null">返回修改</NButton>
+        <NButton :disabled="busy" @click="closeMerge">返回修改</NButton>
         <NButton type="primary" :loading="busy" @click="confirmMerge">合并并创建</NButton>
       </div>
     </template>

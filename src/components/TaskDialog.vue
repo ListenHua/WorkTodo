@@ -74,7 +74,6 @@ async function save() {
       </button>
     </template>
     <TaskForm
-      v-if="ui.taskDialog"
       v-model="form"
       :busy="busy"
       :editing="!!ui.editingTask"
