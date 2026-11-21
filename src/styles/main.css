@@ -1399,19 +1399,6 @@ a.metric-card:focus-visible {
   align-items: center;
   gap: 16px;
 }
-.task-toolbar {
-  flex-wrap: wrap;
-  gap: 12px;
-}
-.task-toolbar > .n-select {
-  width: 140px;
-}
-.task-toolbar > .search-input {
-  width: 220px;
-}
-.task-toolbar .task-count {
-  margin-left: auto;
-}
 .list-skeleton {
   display: grid;
   gap: 20px;
@@ -1545,12 +1532,6 @@ a.metric-card:focus-visible {
   }
   .task-more {
     opacity: 1;
-  }
-  .task-toolbar > .n-select {
-    width: calc(50% - 6px);
-  }
-  .task-toolbar > .search-input {
-    width: 100%;
   }
   .settings-savebar {
     padding: 16px;
@@ -1822,6 +1803,11 @@ a.metric-card:focus-visible {
   font-size: 16px;
   font-weight: 600;
   letter-spacing: 0;
+}
+.topbar-task-count {
+  flex-shrink: 0;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
 }
 .topbar-title .icon-button {
   flex-shrink: 0;

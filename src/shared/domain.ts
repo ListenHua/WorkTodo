@@ -7,7 +7,7 @@ export function isPending(task: Task): boolean {
   return task.status === 'todo' || task.status === 'doing'
 }
 export function isTaskForDay(task: Task, day: string): boolean {
-  return task.planDate === day || !!(task.dueAt && localDate(new Date(task.dueAt)) === day)
+  return task.planDate === day
 }
 export function progress(project: Project): number | null {
   return project.taskCount ? Math.round((project.completedCount / project.taskCount) * 100) : null

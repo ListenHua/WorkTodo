@@ -12,6 +12,7 @@ import { useWorkspaceStore } from '../stores/workspace'
 import { useUiStore } from '../stores/ui'
 import { useReleaseStore } from '../stores/release'
 import { useThemeStore } from '../stores/theme'
+import { useTaskFiltersStore } from '../stores/task-filters'
 import AppIcon from './AppIcon.vue'
 import TopbarSearch from './TopbarSearch.vue'
 import AnimatedThemeToggler from './magicui/AnimatedThemeToggler.vue'
@@ -24,6 +25,7 @@ const message = useAppMessage()
 const ui = useUiStore()
 const release = useReleaseStore()
 const theme = useThemeStore()
+const taskFilters = useTaskFiltersStore()
 const route = useRoute()
 const router = useRouter()
 const showSearch = computed(() => route.path !== '/settings')
@@ -46,7 +48,7 @@ watch(
 watch(
   () => [route.path, route.query.project, route.query.view],
   () => {
-    ui.search = ''
+    if (route.path !== '/tasks') ui.search = ''
   },
   { immediate: true },
 )
@@ -231,6 +233,17 @@ onUnmounted(() => {
           <h1 :title="selectedProject?.name || String(route.meta.title)">
             {{ selectedProject?.name || route.meta.title }}
           </h1>
+          <span
+            v-if="route.path === '/tasks'"
+            class="topbar-task-count muted"
+            role="status"
+            aria-label="待办数量"
+            aria-live="polite"
+            aria-atomic="true"
+            >{{
+              workspace.loading && !workspace.tasks.length ? '…' : taskFilters.filtered.length
+            }}</span
+          >
         </div>
         <TopbarSearch v-if="showSearch" />
         <div class="topbar-actions">
