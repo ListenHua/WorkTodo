@@ -14,8 +14,17 @@ const router = useRouter()
 const root = ref<HTMLElement>()
 const focused = ref(false)
 const active = ref(0)
-const localSearch = computed(() => ['/tasks', '/trash', '/reminders'].includes(route.path))
+const codePage = computed(
+  () =>
+    route.path === '/projects' &&
+    route.query.view === 'code' &&
+    workspace.projects.some((project) => project.id === route.query.project),
+)
+const localSearch = computed(
+  () => ['/tasks', '/trash', '/reminders'].includes(route.path) || codePage.value,
+)
 const placeholder = computed(() => {
+  if (codePage.value) return '搜索当前代码的变动文件…'
   if (route.path === '/tasks') return '搜索待办…'
   if (route.path === '/trash') return '搜索回收站…'
   if (route.path === '/reminders') return '搜索提醒…'

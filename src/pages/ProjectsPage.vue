@@ -14,6 +14,7 @@ import AppIcon from '../components/AppIcon.vue'
 import EmptyState from '../components/EmptyState.vue'
 import TaskList from '../components/TaskList.vue'
 import ProjectFiles from '../components/ProjectFiles.vue'
+import ProjectCodeSpace from '../components/ProjectCodeSpace.vue'
 import ProjectLinks from '../components/ProjectLinks.vue'
 import ProjectLinkIcons from '../components/ProjectLinkIcons.vue'
 import ProjectMasonry from '../components/ProjectMasonry.vue'
@@ -216,12 +217,25 @@ onBeforeUnmount(() => {
   window.removeEventListener('blur', closeContextMenu)
 })
 const selectedTab = computed(() =>
-  ['files', 'links'].includes(String(route.query.view)) ? String(route.query.view) : 'tasks',
+  ['files', 'links', 'code'].includes(String(route.query.view))
+    ? String(route.query.view)
+    : 'tasks',
+)
+watch(
+  () => [route.query.project, route.query.view],
+  () => {
+    if (route.query.project || route.query.view !== 'code') return
+    const query = { ...route.query }
+    delete query.view
+    void router.replace({ query })
+  },
+  { immediate: true },
 )
 function selectTab(view: string) {
+  if (sorting.value) cancelSorting()
   void router.replace({ query: { ...route.query, view } })
 }
-function focusTab(view: 'tasks' | 'files' | 'links') {
+function focusTab(view: 'tasks' | 'code' | 'files' | 'links') {
   selectTab(view)
   document.getElementById(`project-${view}-tab`)?.focus()
 }
@@ -233,40 +247,57 @@ const projectTasks = computed(() =>
 </script>
 <template>
   <template v-if="selected">
-    <NTabs
-      :value="selectedTab"
-      type="line"
-      class="project-tabs"
-      role="tablist"
-      aria-label="项目视图"
-      :theme-overrides="{ tabBorderColor: 'transparent', tabGapMediumLine: '20px' }"
-      @update:value="selectTab"
-    >
-      <NTab
-        v-for="(tab, index) in [
-          { key: 'tasks', label: '待办' },
-          { key: 'files', label: '文件' },
-          { key: 'links', label: '链接' },
-        ]"
-        :key="tab.key"
-        :name="tab.key"
-        :id="`project-${tab.key}-tab`"
-        role="tab"
-        :tabindex="selectedTab === tab.key ? 0 : -1"
-        @keydown.right.prevent="focusTab((['tasks', 'files', 'links'] as const)[(index + 1) % 3]!)"
-        @keydown.left.prevent="focusTab((['tasks', 'files', 'links'] as const)[(index + 2) % 3]!)"
-        @keydown.home.prevent="focusTab('tasks')"
-        @keydown.end.prevent="focusTab('links')"
-        :aria-selected="selectedTab === tab.key"
-        :aria-controls="`project-${tab.key}-panel`"
-        @keydown.enter.prevent="selectTab(tab.key)"
-        @keydown.space.prevent="selectTab(tab.key)"
-      >
-        {{ tab.label }}
-      </NTab>
-    </NTabs>
+    <Teleport to="#page-toolbar">
+      <div class="project-tabs-toolbar">
+        <NTabs
+          :value="selectedTab"
+          type="line"
+          class="project-tabs"
+          role="tablist"
+          aria-label="项目视图"
+          :theme-overrides="{ tabBorderColor: 'transparent', tabGapMediumLine: '20px' }"
+          @update:value="selectTab"
+        >
+          <NTab
+            v-for="(tab, index) in [
+              { key: 'tasks', label: '待办' },
+              { key: 'code', label: '代码空间' },
+              { key: 'files', label: '文件' },
+              { key: 'links', label: '链接' },
+            ]"
+            :key="tab.key"
+            :name="tab.key"
+            :id="`project-${tab.key}-tab`"
+            role="tab"
+            :tabindex="selectedTab === tab.key ? 0 : -1"
+            @keydown.right.prevent="
+              focusTab((['tasks', 'code', 'files', 'links'] as const)[(index + 1) % 4]!)
+            "
+            @keydown.left.prevent="
+              focusTab((['tasks', 'code', 'files', 'links'] as const)[(index + 3) % 4]!)
+            "
+            @keydown.home.prevent="focusTab('tasks')"
+            @keydown.end.prevent="focusTab('links')"
+            :aria-selected="selectedTab === tab.key"
+            :aria-controls="`project-${tab.key}-panel`"
+            @keydown.enter.prevent="selectTab(tab.key)"
+            @keydown.space.prevent="selectTab(tab.key)"
+          >
+            {{ tab.label }}
+          </NTab>
+        </NTabs>
+      </div>
+    </Teleport>
     <div
-      v-if="selectedTab === 'files'"
+      v-if="selectedTab === 'code'"
+      id="project-code-panel"
+      role="tabpanel"
+      aria-labelledby="project-code-tab"
+    >
+      <ProjectCodeSpace :key="selected.id" :project-id="selected.id" />
+    </div>
+    <div
+      v-else-if="selectedTab === 'files'"
       id="project-files-panel"
       role="tabpanel"
       aria-labelledby="project-files-tab"
@@ -393,7 +424,9 @@ const projectTasks = computed(() =>
             class="project-card-main"
           >
             <h2 :title="project.name">{{ project.name }}</h2>
-            <p v-if="project.description" class="project-description">{{ project.description }}</p>
+            <p v-if="project.description" class="project-description">
+              {{ project.description }}
+            </p>
           </component>
           <IconHint v-if="!sorting" :text="project.pinned ? '取消快捷访问' : '加入快捷访问'"
             ><button

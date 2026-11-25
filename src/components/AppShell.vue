@@ -19,7 +19,11 @@ import AnimatedThemeToggler from './magicui/AnimatedThemeToggler.vue'
 
 const emit = defineEmits<{ toolbarResize: [height: number] }>()
 const toolbarHost = ref<HTMLElement | null>(null)
+const pageToolbarHeight = ref(0)
 let toolbarObserver: ResizeObserver | undefined
+const topbarActions = ref<HTMLElement | null>(null)
+const topbarSideWidth = ref(192)
+let topbarActionsObserver: ResizeObserver | undefined
 const workspace = useWorkspaceStore()
 const message = useAppMessage()
 const ui = useUiStore()
@@ -65,7 +69,7 @@ const selectedProject = computed(() =>
 useTrayActions(() => {
   const project = selectedProject.value
   const projectTasks =
-    project?.status === 'active' && !['files', 'links'].includes(String(route.query.view))
+    project?.status === 'active' && !['files', 'links', 'code'].includes(String(route.query.view))
   if (route.path !== '/tasks' && !projectTasks) return false
   if (!ui.taskDialog) ui.newTask(projectTasks ? project!.id : null)
   return true
@@ -73,7 +77,7 @@ useTrayActions(() => {
 const flatPage = computed(() => !!selectedProject.value || !['/', '/projects'].includes(route.path))
 const cardPage = computed(() =>
   selectedProject.value
-    ? !['files', 'links'].includes(String(route.query.view))
+    ? !['files', 'links', 'code'].includes(String(route.query.view))
     : ['/', '/projects', '/tasks', '/trash'].includes(route.path),
 )
 const openingProjectFolder = ref(false)
@@ -116,9 +120,18 @@ let clockTimer: ReturnType<typeof setInterval> | undefined
 let closed = false
 const listeners: (() => void)[] = []
 onMounted(async () => {
+  if (topbarActions.value) {
+    const updateActionsWidth = () => {
+      topbarSideWidth.value = Math.ceil(topbarActions.value?.getBoundingClientRect().width || 0)
+    }
+    updateActionsWidth()
+    topbarActionsObserver = new ResizeObserver(updateActionsWidth)
+    topbarActionsObserver.observe(topbarActions.value)
+  }
   if (toolbarHost.value) {
     toolbarObserver = new ResizeObserver(() => {
-      emit('toolbarResize', toolbarHost.value?.offsetHeight ?? 0)
+      pageToolbarHeight.value = toolbarHost.value?.offsetHeight ?? 0
+      emit('toolbarResize', pageToolbarHeight.value)
     })
     toolbarObserver.observe(toolbarHost.value)
   }
@@ -146,6 +159,7 @@ onMounted(async () => {
 })
 onUnmounted(() => {
   toolbarObserver?.disconnect()
+  topbarActionsObserver?.disconnect()
   emit('toolbarResize', 0)
   sidebarMedia?.removeEventListener('change', updateSidebar)
   closed = true
@@ -213,6 +227,7 @@ onUnmounted(() => {
     </aside>
     <div
       class="main-column"
+      :style="{ '--page-toolbar-height': `${pageToolbarHeight}px` }"
       :class="{
         'flat-layout': flatPage,
         'card-layout': cardPage,
@@ -220,7 +235,7 @@ onUnmounted(() => {
         'overview-layout': route.path === '/',
       }"
     >
-      <header class="topbar">
+      <header class="topbar" :style="{ '--topbar-side-width': `${topbarSideWidth}px` }">
         <div class="topbar-title">
           <IconHint text="返回全部项目" v-if="selectedProject"
             ><button
@@ -246,7 +261,7 @@ onUnmounted(() => {
           >
         </div>
         <TopbarSearch v-if="showSearch" />
-        <div class="topbar-actions">
+        <div ref="topbarActions" class="topbar-actions">
           <span class="date-label">{{ dateLabel }}</span>
           <AnimatedThemeToggler />
           <IconHint text="刷新数据"
@@ -276,7 +291,9 @@ onUnmounted(() => {
             >
               <AppIcon name="folder" :size="20" /></button
           ></IconHint>
-          <IconHint text="添加待办" v-if="selectedProject?.status === 'active'"
+          <IconHint
+            text="添加待办"
+            v-if="selectedProject?.status === 'active' && route.query.view !== 'code'"
             ><button
               class="icon-button topbar-primary-action"
               aria-label="添加待办"
