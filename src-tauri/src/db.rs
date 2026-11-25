@@ -2,7 +2,7 @@ use crate::error::{AppError, AppResult};
 use rusqlite::Connection;
 use std::{path::Path, time::Duration};
 
-pub const SCHEMA_VERSION: i64 = 6;
+pub const SCHEMA_VERSION: i64 = 7;
 
 pub fn connect(path: &Path) -> AppResult<Connection> {
     let connection = Connection::open(path)?;
@@ -49,6 +49,11 @@ pub fn initialize(path: &Path) -> AppResult<()> {
     if version < 6 {
         let transaction = connection.transaction()?;
         transaction.execute_batch(include_str!("../migrations/006_project_tags.sql"))?;
+        transaction.commit()?;
+    }
+    if version < 7 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(include_str!("../migrations/007_code_directories.sql"))?;
         transaction.commit()?;
     }
     Ok(())

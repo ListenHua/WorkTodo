@@ -25,7 +25,18 @@ pub struct Project {
     pub completed_count: i64,
     pub links: Vec<ProjectLink>,
     pub tags: Vec<ProjectTag>,
+    pub code_directories: Vec<CodeDirectory>,
     pub pinned: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeDirectory {
+    pub id: String,
+    pub name: String,
+    #[serde(alias = "relativePath")]
+    pub path: String,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

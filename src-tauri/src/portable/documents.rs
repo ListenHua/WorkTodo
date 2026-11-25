@@ -361,6 +361,15 @@ pub fn hydrate(db: &mut Connection, root: &Path, docs: &Documents) -> AppResult<
         }
         p["linksJson"] = json!(serde_json::to_string(&links).unwrap());
         p["tagsJson"] = json!(p["tags"].to_string());
+        let codes: Vec<crate::models::CodeDirectory> = serde_json::from_value(
+            p.get("codeDirectories")
+                .cloned()
+                .unwrap_or_else(|| json!([])),
+        )
+        .map_err(|_| io::invalid("代码目录关联数据无效"))?;
+        services::code_directories::validate_records(&codes)?;
+        p["codeDirectoriesJson"] =
+            json!(serde_json::to_string(&codes).map_err(|_| io::invalid("代码目录关联数据无效"))?);
         insert(
             &tx,
             "projects",
@@ -376,6 +385,7 @@ pub fn hydrate(db: &mut Connection, root: &Path, docs: &Documents) -> AppResult<
                 ("pinned", "pinned"),
                 ("links_json", "linksJson"),
                 ("tags_json", "tagsJson"),
+                ("code_directories_json", "codeDirectoriesJson"),
             ],
             &p,
         )?;
@@ -701,7 +711,7 @@ pub fn export(db: &Connection, root: &Path, old: &Documents) -> AppResult<Docume
     }).collect::<Vec<_>>();
     config["fileOperations"] = json!(operations);
     let mut documents = Documents::new();
-    let projects=rows(db,"SELECT id,name,directory_relpath AS directory,description,color,status,created_at AS createdAt,pinned,links_json AS links,tags_json AS tags FROM projects WHERE id!='__inbox__' ORDER BY id",None)?;
+    let projects=rows(db,"SELECT id,name,directory_relpath AS directory,description,color,status,created_at AS createdAt,pinned,links_json AS links,tags_json AS tags,code_directories_json AS codeDirectories FROM projects WHERE id!='__inbox__' ORDER BY id",None)?;
     // Keep a deletion record in the workspace document after unregistering a project.
     if let Some(previous) = previous {
         for project in items(previous, "projects")? {
@@ -755,6 +765,8 @@ pub fn export(db: &Connection, root: &Path, old: &Documents) -> AppResult<Docume
         }
         project["tags"] = serde_json::from_str(text(&project, "tags")?)
             .map_err(|_| io::invalid("项目标签损坏"))?;
+        project["codeDirectories"] = serde_json::from_str(text(&project, "codeDirectories")?)
+            .map_err(|_| io::invalid("代码目录关联数据损坏"))?;
         project["pinned"] = json!(project["pinned"] == 1);
         project["files"] = json!(file_rows(
             db,

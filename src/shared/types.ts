@@ -19,6 +19,12 @@ export interface ProjectTag {
   name: string
   color: string
 }
+export interface CodeDirectory {
+  id: string
+  name: string
+  path: string
+  createdAt: string
+}
 export interface Project {
   id: string
   name: string
@@ -32,6 +38,7 @@ export interface Project {
   completedCount: number
   tags?: ProjectTag[]
   links?: ProjectLink[]
+  codeDirectories?: CodeDirectory[]
 }
 export interface Task {
   id: string

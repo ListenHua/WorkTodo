@@ -47,7 +47,7 @@ pub fn normalized_name(name: &str) -> AppResult<String> {
 pub fn list(connection: &Connection) -> AppResult<Vec<Project>> {
     let mut statement = connection.prepare(
         "SELECT p.id,p.name,p.description,p.color,p.status,p.directory_relpath,p.created_at,
-         p.links_json,COUNT(t.id),COALESCE(SUM(CASE WHEN t.status='done' THEN 1 ELSE 0 END),0),p.pinned,p.tags_json
+         p.links_json,COUNT(t.id),COALESCE(SUM(CASE WHEN t.status='done' THEN 1 ELSE 0 END),0),p.pinned,p.tags_json,p.code_directories_json
          FROM projects p LEFT JOIN tasks t ON t.project_id=p.id AND t.status!='canceled' AND t.deleted_at IS NULL
          WHERE p.id!='__inbox__' GROUP BY p.id ORDER BY p.created_at DESC,p.id",
     )?;
@@ -77,6 +77,15 @@ pub fn list(connection: &Connection) -> AppResult<Vec<Project>> {
                     Box::new(error),
                 )
             })?,
+            code_directories: serde_json::from_str(&row.get::<_, String>(12)?).map_err(
+                |error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        12,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                },
+            )?,
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -426,6 +435,7 @@ pub fn create(connection: &mut Connection, input: CreateProject) -> AppResult<Pr
         pinned: false,
         links,
         tags,
+        code_directories: vec![],
     })
 }
 

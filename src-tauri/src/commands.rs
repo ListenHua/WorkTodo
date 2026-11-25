@@ -1183,3 +1183,285 @@ pub async fn files_accept_changes(
     })
     .await
 }
+
+fn check_code_workspace(db: &Connection, binding_id: &str, write: bool) -> AppResult<()> {
+    let status = services::workspace::status(db)?;
+    if status.binding_id.as_deref().unwrap_or("") != binding_id {
+        return Err(AppError::new(
+            "WORKSPACE_CHANGED",
+            "工作目录已切换，请重新打开代码空间",
+        ));
+    }
+    if write && status.read_only {
+        return Err(AppError::new("READ_ONLY", "当前工作目录只读"));
+    }
+    Ok(())
+}
+fn code_folder(
+    db: &Connection,
+    project_id: &str,
+    code_id: &str,
+    binding_id: &str,
+    write: bool,
+) -> AppResult<PathBuf> {
+    check_code_workspace(db, binding_id, write)?;
+    services::code_directories::folder(db, project_id, code_id)
+}
+#[tauri::command]
+pub async fn code_pick_directory(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project_id: String,
+    binding_id: String,
+) -> AppResult<Option<String>> {
+    let pid = project_id.clone();
+    let binding = binding_id.clone();
+    let root = blocking_read(state.db_path.clone(), move |db| {
+        check_code_workspace(db, &binding, true)?;
+        services::code_directories::records(db, &pid)?;
+        Ok(services::projects::folder(db, &pid).ok())
+    })
+    .await?;
+    let selected = tauri::async_runtime::spawn_blocking(move || {
+        let picker = app.dialog().file().set_title("选择代码目录");
+        let picker = if let Some(root) = root {
+            picker.set_directory(root)
+        } else {
+            picker
+        };
+        picker.blocking_pick_folder()
+    })
+    .await
+    .map_err(|_| AppError::new("WORKER_ERROR", "目录选择中断"))?;
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let selected = selected
+        .into_path()
+        .map_err(|_| AppError::new("INVALID_PATH", "目录无效"))?;
+    blocking_read(state.db_path.clone(), move |db| {
+        check_code_workspace(db, &binding_id, true)?;
+        services::code_directories::records(db, &project_id)?;
+        let root = services::projects::folder(db, &project_id).ok();
+        services::code_directories::selected_path(root.as_deref(), &selected).map(Some)
+    })
+    .await
+}
+#[tauri::command]
+pub async fn code_save_directory(
+    state: State<'_, AppState>,
+    project_id: String,
+    binding_id: String,
+    code_id: Option<String>,
+    name: String,
+    path: String,
+) -> AppResult<Vec<CodeDirectory>> {
+    blocking(state.db_path.clone(), move |db| {
+        check_code_workspace(db, &binding_id, true)?;
+        services::code_directories::save(db, &project_id, code_id.as_deref(), &name, &path)
+    })
+    .await
+}
+#[tauri::command]
+pub async fn code_remove_directory(
+    state: State<'_, AppState>,
+    project_id: String,
+    binding_id: String,
+    code_id: String,
+) -> AppResult<Vec<CodeDirectory>> {
+    blocking(state.db_path.clone(), move |db| {
+        check_code_workspace(db, &binding_id, true)?;
+        services::code_directories::remove(db, &project_id, &code_id)
+    })
+    .await
+}
+#[tauri::command]
+pub async fn code_open_directory(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project_id: String,
+    code_id: String,
+    binding_id: String,
+) -> AppResult<()> {
+    blocking_read(state.db_path.clone(), move |db| {
+        let folder = code_folder(db, &project_id, &code_id, &binding_id, false)?;
+        app.opener()
+            .open_path(folder.to_string_lossy(), None::<&str>)
+            .map_err(|_| AppError::new("OPEN_DIRECTORY_FAILED", "无法打开代码文件夹"))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn code_open_terminal(
+    state: State<'_, AppState>,
+    project_id: String,
+    code_id: String,
+    binding_id: String,
+) -> AppResult<()> {
+    blocking_read(state.db_path.clone(), move |db| {
+        let folder = code_folder(db, &project_id, &code_id, &binding_id, false)?;
+        services::terminal::open(&folder)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn code_inspect(
+    state: State<'_, AppState>,
+    project_id: String,
+    code_id: String,
+    binding_id: String,
+) -> AppResult<services::code_space::GitInfo> {
+    let folder = blocking_read(state.db_path.clone(), move |db| {
+        code_folder(db, &project_id, &code_id, &binding_id, false)
+    })
+    .await;
+    let folder = match folder {
+        Ok(folder) => folder,
+        Err(error)
+            if [
+                "CODE_DIRECTORY_UNAVAILABLE",
+                "FILESYSTEM_ERROR",
+                "UNSAFE_DIRECTORY",
+            ]
+            .contains(&error.code.as_str()) =>
+        {
+            return Ok(services::code_space::GitInfo {
+                state: "missing".into(),
+                message: "代码目录不可用，请重新选择或取消关联".into(),
+                ..Default::default()
+            });
+        }
+        Err(error) => return Err(error),
+    };
+    tauri::async_runtime::spawn_blocking(move || services::code_space::inspect(&folder))
+        .await
+        .map_err(|_| AppError::new("WORKER_ERROR", "Git 状态读取中断"))?
+}
+
+#[tauri::command]
+pub async fn code_scan(
+    state: State<'_, AppState>,
+    project_id: String,
+    code_id: String,
+    binding_id: String,
+    request_id: String,
+    on_progress: Channel<services::code_space::CodeProgress>,
+) -> AppResult<services::code_space::SpaceUsage> {
+    if uuid::Uuid::parse_str(&request_id).is_err() {
+        return Err(AppError::new("INVALID_REQUEST", "无效的统计请求"));
+    }
+    let key = format!("code:{request_id}");
+    let canceled = Arc::new(AtomicBool::new(false));
+    {
+        let mut jobs = state
+            .imports
+            .lock()
+            .map_err(|_| AppError::new("WORKER_ERROR", "体积统计暂不可用"))?;
+        if jobs.contains_key(&key) || jobs.keys().filter(|k| k.starts_with("code:")).count() >= 3 {
+            return Err(AppError::new("SCAN_BUSY", "已有体积统计进行中，请稍后重试"));
+        }
+        jobs.insert(key.clone(), canceled.clone());
+    }
+    let result = async {
+        let folder = blocking_read(state.db_path.clone(), move |db| {
+            code_folder(db, &project_id, &code_id, &binding_id, false)
+        })
+        .await?;
+        if canceled.load(Ordering::Relaxed) {
+            return Err(AppError::new("CANCELED", "已取消体积统计"));
+        }
+        tauri::async_runtime::spawn_blocking(move || {
+            services::code_space::scan(&folder, &canceled, |progress| {
+                if on_progress.send(progress).is_err() {
+                    canceled.store(true, Ordering::Relaxed);
+                }
+            })
+        })
+        .await
+        .map_err(|_| AppError::new("WORKER_ERROR", "体积统计中断"))?
+    }
+    .await;
+    if let Ok(mut jobs) = state.imports.lock() {
+        jobs.remove(&key);
+    }
+    result
+}
+
+#[tauri::command]
+pub fn code_cancel_scan(state: State<'_, AppState>, request_id: String) -> AppResult<()> {
+    if let Some(canceled) = state
+        .imports
+        .lock()
+        .map_err(|_| AppError::new("WORKER_ERROR", "无法取消统计"))?
+        .get(&format!("code:{request_id}"))
+    {
+        canceled.store(true, Ordering::Relaxed);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn code_clean(
+    state: State<'_, AppState>,
+    project_id: String,
+    code_id: String,
+    binding_id: String,
+    targets: Vec<services::code_space::Dependency>,
+    on_progress: Channel<services::code_space::CodeProgress>,
+) -> AppResult<services::code_space::CleanResult> {
+    // Keep the workspace binding and project directory stable for the destructive operation.
+    // This read transaction holds the directory lock without rewriting application metadata.
+    blocking_read(state.db_path.clone(), move |db| {
+        let folder = code_folder(db, &project_id, &code_id, &binding_id, true)?;
+        services::code_space::clean(&folder, &targets, |progress| {
+            let _ = on_progress.send(progress);
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn code_reveal(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project_id: String,
+    code_id: String,
+    binding_id: String,
+    path: String,
+) -> AppResult<()> {
+    blocking_read(state.db_path.clone(), move |db| {
+        let folder = code_folder(db, &project_id, &code_id, &binding_id, false)?;
+        let relative = std::path::Path::new(&path);
+        if relative.is_absolute()
+            || !relative
+                .components()
+                .all(|c| matches!(c, std::path::Component::Normal(_)))
+        {
+            return Err(AppError::new("INVALID_PATH", "文件位置无效"));
+        }
+        let mut parent = folder;
+        for component in relative
+            .parent()
+            .unwrap_or(std::path::Path::new(""))
+            .components()
+        {
+            let next = parent.join(component);
+            match std::fs::symlink_metadata(&next) {
+                Ok(meta) if meta.is_dir() && !services::files::is_link(&meta) => parent = next,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+                _ => {
+                    return Err(AppError::new(
+                        "DIRECTORY_CHANGED",
+                        "文件夹已变化，请刷新 Git 状态",
+                    ))
+                }
+            }
+        }
+        app.opener()
+            .open_path(parent.to_string_lossy(), None::<&str>)
+            .map_err(|_| AppError::new("OPEN_DIRECTORY_FAILED", "无法打开文件所在文件夹"))
+    })
+    .await
+}

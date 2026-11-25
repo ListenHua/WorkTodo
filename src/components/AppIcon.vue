@@ -15,6 +15,7 @@ import PlusIcon from '@mingcute/vue/core-regular/add'
 import BackIcon from '@mingcute/vue/core-filled/left'
 import ArrowIcon from '@mingcute/vue/core-filled/right'
 import RefreshIcon from '@mingcute/vue/core-regular/refresh-1'
+import TerminalIcon from '@mingcute/vue/core-regular/terminal-box'
 import MonitorIcon from '@mingcute/vue/core-regular/monitor'
 import LeafIcon from '@mingcute/vue/core-regular/leaf'
 import SearchIcon from '@mingcute/vue/core-regular/search'
@@ -58,6 +59,7 @@ const icons: Record<string, Component> = {
   arrow: ArrowIcon,
   back: BackIcon,
   refresh: RefreshIcon,
+  terminal: TerminalIcon,
   monitor: MonitorIcon,
   leaf: LeafIcon,
   search: SearchIcon,
